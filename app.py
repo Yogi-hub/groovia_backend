@@ -32,7 +32,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Assets
-LOGO_PATH = r"assets\Immigroov_Transparent_Logo.png"
+LOGO_PATH = r"assets/Immigroov_Transparent_Logo.png"
 USER_ICON = "👤"
 BOT_ICON = "🤖"
 
