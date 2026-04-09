@@ -6,6 +6,7 @@ openai
 tavily-python>=0.7.12
 langchain-community>=0.3.0
 langchain-groq
+exa-py
 
 # --- Document Intelligence ---
 docling>=2.0.0
