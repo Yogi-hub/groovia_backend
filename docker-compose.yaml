@@ -1,9 +1,30 @@
-# Orchestration configuration
 services:
   career-agent-api:
     build: .
+    command: python main.py
     ports:
       - "8000:8000"
     env_file:
       - .env
+    environment:
+      - CORS_ORIGINS=http://localhost:8501
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  career-agent-ui:
+    build: .
+    command: streamlit run app.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      - BACKEND_URL=http://career-agent-api:8000
+    depends_on:
+      career-agent-api:
+        condition: service_healthy
     restart: always

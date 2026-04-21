@@ -1,14 +1,24 @@
-# Python cache files
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Local environment and secrets
 .env
 .venv
 env/
 venv/
 
-# Development metadata
 .git/
 .gitignore
+
+# frontend — not part of the API container
+app.py
+
+# uploaded files and local artefacts
+data/
+assets/
+*.png
+*.pdf
+*.docx
+
+.vscode/
+.idea/
