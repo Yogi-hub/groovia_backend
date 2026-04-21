@@ -10,6 +10,9 @@ env/
 # Python artifacts
 __pycache__/
 *.py[cod]
+__pycache__/
+.venv/
+*.pyc
 share/
 Include/
 Lib/
