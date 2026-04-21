@@ -4,7 +4,7 @@ import io
 import docx2txt
 from pypdf import PdfReader
 from langchain_core.tools import tool
-from langchain_community.tools.tavily_search import TavilySearchResults
+from langchain_tavily import TavilySearch
 from exa_py import Exa
 from config import EXA_API_KEY, TAVILY_API_KEY
 
@@ -27,7 +27,7 @@ def career_market_search(query: str) -> str:
     Use this for: 'What is the tech scene like in Germany?' or 'General cost of living in Eindhoven'.
     DO NOT use this for precise government policies, visa details or salary thresholds.
     """
-    search = TavilySearchResults(max_results=5)
+    search = TavilySearch(max_results=5)
     results = search.invoke({"query": query})
     return str(results)
 

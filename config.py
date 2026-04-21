@@ -10,10 +10,14 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 EXA_API_KEY = os.getenv("EXA_API_KEY")
 
 # Model Settings
-MAIN_MODEL_NAME = "llama-3.3-70b-versatile"
-FALLBACK_MODEL_NAME = "llama-3.1-8b-instant"
-ROUTER_MODEL_NAME = "llama-3.1-8b-instant"
+MAIN_MODEL_NAME = "meta-llama/llama-4-scout-17b-16e-instruct"
+FALLBACK_MODEL_NAME = "meta-llama/llama-4-scout-17b-16e-instruct"
+ROUTER_MODEL_NAME = "meta-llama/llama-4-scout-17b-16e-instruct"
 TEMPERATURE = 0.0
+
+# Chat settings
+NUM_COUNTRIES = 3
+MAX_REVISION = 2
 
 # Server Settings
 PORT = 8000

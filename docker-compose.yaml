@@ -1,0 +1,9 @@
+# Orchestration configuration
+services:
+  career-agent-api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    restart: always
