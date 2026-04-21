@@ -1,12 +1,11 @@
-# Groovia — AI Career & Study Consulting Engine
+# Groovia: Immigroov's Virtual AI Assistant
 
 Groovia is an agentic AI backend that maps a user's resume to optimal global career or study destinations using real-time search data. It is built with LangGraph (reflection pattern), served via FastAPI, and containerised with Docker.
 
-The frontend (Streamlit) communicates with the backend exclusively through the REST API. This repo contains only the backend.
-
+The frontend (Streamlit) communicates with the backend exclusively through the REST API. 
 ---
 
-## Architecture
+## System Architecture (Sequence Diagram)
 
 ```mermaid
 sequenceDiagram
