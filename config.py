@@ -18,7 +18,7 @@ MAX_REVISION = 2
 
 PORT = 8000
 HOST = "0.0.0.0"
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:8501").split(",")
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:8000").split(",")
 
 # crash at startup if any required key is absent rather than failing mid-request
 _missing = [k for k, v in {"GROQ_API_KEY": GROQ_API_KEY, "TAVILY_API_KEY": TAVILY_API_KEY, "EXA_API_KEY": EXA_API_KEY}.items() if not v]
