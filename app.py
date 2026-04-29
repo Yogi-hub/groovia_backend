@@ -1,5 +1,4 @@
 # app.py
-import os
 import streamlit as st
 import requests
 import uuid
@@ -8,11 +7,21 @@ from pathlib import Path
 st.set_page_config(page_title="Groovia", layout="centered")
 
 LOGO_PATH = r"assets/Immigroov_Transparent_Logo.png"
-API_URL = os.getenv("BACKEND_URL", "http://localhost:8000") + "/chat"
 
 with st.sidebar:
     if Path(LOGO_PATH).exists():
         st.image(LOGO_PATH, use_container_width=True)
+    st.markdown("---")
+    backend_choice = st.radio(
+        "Backend",
+        options=["Local", "Render"],
+        index=0,
+    )
+    API_URL = (
+        "http://localhost:8000/chat"
+        if backend_choice.startswith("Local")
+        else "https://groovia-94wn.onrender.com/chat"
+    )
     st.markdown("---")
     if st.button("Clear Chat & Restart"):
         st.session_state.clear()
@@ -34,18 +43,24 @@ with col1:
         uploaded_file = st.file_uploader("Upload Resume", type=["pdf", "docx"])
 
 if uploaded_file and not st.session_state.resume_uploaded:
+    st.session_state.messages.append({"role": "user", "content": "📎 Resume uploaded"})
     with st.spinner("Analyzing resume..."):
-        files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
-        data = {"message": "Analyze my resume.", "thread_id": st.session_state.thread_id}
-        response = requests.post(API_URL, files=files, data=data)
+        try:
+            files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
+            data = {"message": "Analyze my resume.", "thread_id": st.session_state.thread_id}
+            response = requests.post(API_URL, files=files, data=data, timeout=130)
 
-        if response.status_code == 200:
-            res_content = response.json().get("response", "")
-            st.session_state.messages.append({"role": "assistant", "content": res_content})
-            st.session_state.resume_uploaded = True
-            st.rerun()
-        else:
-            st.error("Error communicating with backend server")
+            if response.status_code == 200:
+                res_content = response.json().get("response", "")
+                st.session_state.messages.append({"role": "assistant", "content": res_content})
+                st.session_state.resume_uploaded = True
+                st.rerun()
+            else:
+                st.error(f"Backend error {response.status_code}: {response.text}")
+        except requests.exceptions.Timeout:
+            st.error("Request timed out. The backend is taking too long — please try again.")
+        except requests.exceptions.ConnectionError:
+            st.error("Cannot reach the backend server. Make sure it is running.")
 
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
@@ -57,12 +72,17 @@ if prompt := st.chat_input("Ask about your career..."):
         st.markdown(prompt)
     with st.chat_message("assistant"):
         with st.spinner("Consulting..."):
-            payload = {"message": prompt, "thread_id": st.session_state.thread_id}
-            chat_res = requests.post(API_URL, data=payload)
+            try:
+                payload = {"message": prompt, "thread_id": st.session_state.thread_id}
+                chat_res = requests.post(API_URL, data=payload, timeout=130)
 
-            if chat_res.status_code == 200:
-                ans = chat_res.json().get("response", "")
-                st.markdown(ans)
-                st.session_state.messages.append({"role": "assistant", "content": ans})
-            else:
-                st.error("Failed to receive response from backend")
+                if chat_res.status_code == 200:
+                    ans = chat_res.json().get("response", "")
+                    st.markdown(ans)
+                    st.session_state.messages.append({"role": "assistant", "content": ans})
+                else:
+                    st.error(f"Backend error {chat_res.status_code}: {chat_res.text}")
+            except requests.exceptions.Timeout:
+                st.error("Request timed out. The backend is taking too long — please try again.")
+            except requests.exceptions.ConnectionError:
+                st.error("Cannot reach the backend server. Make sure it is running.")
