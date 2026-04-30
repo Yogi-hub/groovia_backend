@@ -22,7 +22,7 @@ def parse_docx_to_text(file_bytes: bytes) -> str:
 
 
 @tool
-def career_market_search(query: str) -> str:
+def general_search(query: str) -> str:
     """
     Broad web search for country overviews, culture, cost of living, general market trends, pros and cons.
     Use for: 'Tech scene in Germany', 'Cost of living in Amsterdam', 'Issues faced by expats in USA'.
@@ -32,22 +32,20 @@ def career_market_search(query: str) -> str:
         results = _tavily.invoke({"query": query})
         return str(results)
     except Exception as e:
-        return f"[SEARCH_ERROR] career_market_search failed: {e}"
+        return f"[SEARCH_ERROR] general_search failed: {e}"
 
 
 @tool
-def neural_research_tool(query: str, search_type: str = "neural") -> str:
+def precise_search(query: str) -> str:
     """
-    Precise neural search for legal, visa, salary, and policy data.
+    Precise neural search for accurate legal, visa, salary, and policy data.
     Use for: exact visa names, salary thresholds, immigration law updates, university syllabi.
-    Arguments:
-    - query: specific natural language question.
-    - search_type: 'neural' (default) for facts, 'keyword' for exact-match lookups.
+    Argument: query — a specific natural language question about visa, law, salary, or policy.
     """
     try:
         response = exa.search(
             query,
-            type=search_type,
+            type="neural",
             num_results=3,
             contents={"highlights": {"max_characters": 1000}},
         )
@@ -57,4 +55,4 @@ def neural_research_tool(query: str, search_type: str = "neural") -> str:
         ]
         return json.dumps(results, ensure_ascii=False)
     except Exception as e:
-        return f"[SEARCH_ERROR] neural_research_tool failed: {e}"
+        return f"[SEARCH_ERROR] precise_search failed: {e}"
