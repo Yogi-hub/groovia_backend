@@ -14,10 +14,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Application source copy
-COPY . .
+COPY main.py backend.py config.py prompts.py schema.py utils.py requirements.txt ./
 
 # Port exposure
-EXPOSE 8000
+EXPOSE ${PORT:-8000}
 
-# Server execution
-CMD ["uvicorn", "main:api", "--host", "0.0.0.0", "--port", "8000"]
+# Server execution — reads $PORT set by the platform (Render), falls back to 8000 locally
+CMD sh -c "uvicorn main:api --host 0.0.0.0 --port ${PORT:-8000}"
