@@ -22,8 +22,6 @@ services:
       - "8501:8501"
     env_file:
       - .env
-    environment:
-      - BACKEND_URL=http://career-agent-api:8000
     depends_on:
       career-agent-api:
         condition: service_healthy

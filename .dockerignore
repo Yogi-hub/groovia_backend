@@ -6,19 +6,29 @@ __pycache__/
 .venv
 env/
 venv/
+Lib/
+Scripts/
+Include/
+share/
+pyvenv.cfg
 
 .git/
 .gitignore
 
 # frontend — not part of the API container
 app.py
-
-# uploaded files and local artefacts
-data/
 assets/
+
+# local dev artefacts
+data/
+etc/
 *.png
 *.pdf
 *.docx
+*.ipynb
+.ipynb_checkpoints/
+README.md
+docker-compose.yaml
 
 .vscode/
 .idea/
