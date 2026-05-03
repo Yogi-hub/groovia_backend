@@ -1,5 +1,6 @@
 # main.py
 import asyncio
+import traceback
 import uuid
 import uvicorn
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
@@ -96,8 +97,9 @@ async def chat_handler(
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="Agent timed out. Please try again.")
     except Exception as e:
-        print(f"[ERROR] Agent crashed: {e}")
-        raise HTTPException(status_code=500, detail="An internal error occurred. Please try again.")
+        print(f"[ERROR] thread={thread_id} {type(e).__name__}: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":

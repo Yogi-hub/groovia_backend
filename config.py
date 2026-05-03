@@ -9,14 +9,14 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 EXA_API_KEY = os.getenv("EXA_API_KEY")
 
-MAIN_MODEL_NAME = "llama-3.3-70b-versatile"
-REVIEW_MODEL_NAME = "openai/gpt-oss-120b"
+MAIN_MODEL_NAME   = os.getenv("MAIN_MODEL_NAME",   "llama-3.3-70b-versatile")
+REVIEW_MODEL_NAME = os.getenv("REVIEW_MODEL_NAME", "llama-3.1-8b-instant")
 TEMPERATURE = 0.0
 
 NUM_COUNTRIES = 4
-MAX_REVISION = 3
+MAX_REVISION  = 3
 
-PORT = 8000
+PORT = int(os.getenv("PORT", 8000))
 HOST = "0.0.0.0"
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:8501,http://localhost:8502,http://localhost:8503").split(",")
 

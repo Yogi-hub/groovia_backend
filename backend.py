@@ -2,7 +2,7 @@
 import re
 from typing import Annotated, TypedDict, Optional
 from langchain_groq import ChatGroq
-from langchain_core.messages import AIMessage, SystemMessage, HumanMessage, ToolMessage
+from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
@@ -28,6 +28,7 @@ _STUDY_WORDS = {
     "research", "school", "college", "program", "programme", "course",
     "scholarship", "admission",
 }
+# _WORK_WORDS and _STUDY_WORDS are fallback-only; primary detection is via <TRACK:...> tag in LLM response.
 _OPT_OUT = {"just questions", "no report", "questions only", "skip report"}
 _REPORT_TRIGGERS = {
     "generate report", "generate a report", "create report", "make a report",
@@ -37,7 +38,7 @@ _REPORT_TRIGGERS = {
 _n = config.NUM_COUNTRIES
 _PHASE_PROMPTS = {
     "no_resume": NO_RESUME_PROMPT,
-    "intake":    INTAKE_PROMPT,
+    "intake":    INTAKE_PROMPT.replace("{{num_countries}}", str(_n)),
     "report":    REPORT_PROMPT.replace("{{num_countries}}", str(_n)),
     "qa":        QA_PROMPT,
 }
@@ -56,15 +57,14 @@ def _text(content) -> str:
 
 
 class AgentState(TypedDict):
-    messages:              Annotated[list, add_messages]
-    resume_text:           Optional[str]
-    resume_processed:      bool
-    track:                 Optional[str]
-    revision_count:        int
-    qa_revision_count:     int
-    critique:              Optional[str]
-    phase:                 Optional[str]
-    preferences_collected: bool
+    messages:          Annotated[list, add_messages]
+    resume_text:       Optional[str]
+    resume_processed:  bool
+    track:             Optional[str]
+    revision_count:    int
+    qa_revision_count: int
+    critique:          Optional[str]
+    phase:             Optional[str]
 
 
 def _log_groq_failure(e: Exception) -> None:
@@ -83,13 +83,10 @@ def compressor_node(state: AgentState):
     raw_text = state.get("resume_text")
     if not raw_text:
         return {}
-    try:
-        summary = review_llm.invoke([
-            SystemMessage(content=COMPRESSION_PROMPT),
-            HumanMessage(content=raw_text),
-        ]).content
-    except Exception:
-        summary = raw_text[:2000]
+    summary = review_llm.invoke([
+        SystemMessage(content=COMPRESSION_PROMPT),
+        HumanMessage(content=raw_text),
+    ]).content
     return {"resume_text": summary, "resume_processed": True, "phase": "intake"}
 
 
@@ -100,45 +97,27 @@ def call_model(state: AgentState):
     resume   = state.get("resume_text") or "No resume provided."
     critique = state.get("critique") or "None"
 
-    new_phase                = phase
-    new_track                = track
-    new_revision_count       = state.get("revision_count", 0)
-    new_qa_rev               = state.get("qa_revision_count", 0)
-    new_preferences_collected = state.get("preferences_collected", False)
+    new_phase          = phase
+    new_track          = track
+    new_revision_count = state.get("revision_count", 0)
+    new_qa_rev         = state.get("qa_revision_count", 0)
 
     human_msgs      = [m for m in messages if isinstance(m, HumanMessage)]
     last_human_text = _text(human_msgs[-1].content).lower() if human_msgs else ""
     last_msg        = messages[-1] if messages else None
 
     # ------------------------------------------------------------------
-    # phase transitions
+    # phase transitions (report / qa only — intake handled post-LLM via tag)
     # ------------------------------------------------------------------
-    if phase == "intake":
-        words = set(last_human_text.split())
-        if not new_track:
-            if words & _WORK_WORDS:
-                new_track = "WORK"
-            elif words & _STUDY_WORDS:
-                new_track = "STUDY"
-        if new_track:
-            new_phase = "report"
-            new_preferences_collected = False
-
-    elif phase == "report":
-        if not new_preferences_collected and isinstance(last_msg, HumanMessage):
-            # User responded to the preferences question
-            if any(p in last_human_text for p in _OPT_OUT):
-                new_phase = "qa"
-            else:
-                new_preferences_collected = True
-                new_revision_count = 0
+    if phase == "report":
+        if isinstance(last_msg, HumanMessage) and any(p in last_human_text for p in _OPT_OUT):
+            new_phase = "qa"
 
     elif phase == "qa":
         if any(t in last_human_text for t in _REPORT_TRIGGERS):
             if resume != "No resume provided.":
                 new_phase = "report"
                 new_revision_count = 0
-                new_preferences_collected = False
             else:
                 new_phase = "no_resume"
 
@@ -148,33 +127,6 @@ def call_model(state: AgentState):
             new_qa_rev = state.get("qa_revision_count", 0)
         else:
             new_qa_rev = state.get("qa_revision_count", 0) + 1
-
-    # ------------------------------------------------------------------
-    # Preferences question — code-driven, no LLM (guarantees it is always asked)
-    # ------------------------------------------------------------------
-    if new_phase == "report" and not new_preferences_collected:
-        pref_msg = (
-            f"Any preferences for your {_n}-country recommendations? "
-            "(climate, salary range, work-life balance, company size, etc.) "
-            "Say *skip* to proceed based on your profile alone, "
-            "or *just questions* if you'd prefer to explore without a full report."
-        )
-        try:
-            pref_response = review_llm.invoke([
-                SystemMessage(content="Output ONLY the following message, word for word, with no changes:"),
-                HumanMessage(content=pref_msg),
-            ])
-        except Exception:
-            pref_response = AIMessage(content=pref_msg)
-        return {
-            "messages":              [pref_response],
-            "phase":                 new_phase,
-            "track":                 new_track,
-            "revision_count":        new_revision_count,
-            "qa_revision_count":     new_qa_rev,
-            "preferences_collected": False,
-            "critique":              None,
-        }
 
     # ------------------------------------------------------------------
     # build prompt
@@ -197,24 +149,49 @@ def call_model(state: AgentState):
 
     payload = [SystemMessage(content=instruction)] + history
 
-    print(f"[CALL_MODEL] phase={new_phase} track={new_track} msgs={len(history)} preferences_collected={new_preferences_collected}")
+    # Don't bind tools when writing after tool results — Groq misparses URLs as malformed tool calls
+    writing_after_tools = bool(history) and isinstance(history[-1], ToolMessage)
+
+    print(f"[CALL_MODEL] phase={new_phase} track={new_track} msgs={len(history)} writing_after_tools={writing_after_tools}")
 
     try:
-        response = primary_llm.bind_tools([general_search, precise_search]).invoke(payload)
+        if new_phase == "intake" or writing_after_tools:
+            response = primary_llm.invoke(payload)
+        else:
+            response = primary_llm.bind_tools([general_search, precise_search]).invoke(payload)
     except Exception as e:
         _log_groq_failure(e)
-        response = review_llm.bind_tools([general_search, precise_search]).invoke(payload)
+        raise
+
+    # ------------------------------------------------------------------
+    # intake: detect track from LLM signal tag; keyword fallback if absent
+    # ------------------------------------------------------------------
+    if phase == "intake":
+        tag_match = re.search(r"<TRACK:(WORK|STUDY)>", _text(response.content))
+        if tag_match:
+            new_track = tag_match.group(1)
+            new_phase = "report"
+            cleaned = re.sub(r"\s*<TRACK:(?:WORK|STUDY)>\s*", "", _text(response.content)).strip()
+            response = AIMessage(content=cleaned)
+        elif not new_track:
+            words = set(last_human_text.split())
+            if words & _WORK_WORDS:
+                new_track = "WORK"
+            elif words & _STUDY_WORDS:
+                new_track = "STUDY"
+            if new_track:
+                new_phase = "report"
 
     tool_calls = getattr(response, "tool_calls", [])
     print(f"[CALL_MODEL] response type={'tool_call' if tool_calls else 'text'} tool_calls={[tc['name'] for tc in tool_calls]}")
 
     return {
-        "messages":              [response],
-        "phase":                 new_phase,
-        "track":                 new_track,
-        "revision_count":        new_revision_count,
-        "qa_revision_count":     new_qa_rev,
-        "preferences_collected": new_preferences_collected,
+        "messages":          [response],
+        "phase":             new_phase,
+        "track":             new_track,
+        "revision_count":    new_revision_count,
+        "qa_revision_count": new_qa_rev,
+        "critique":          None if new_phase != phase else state.get("critique"),
     }
 
 
@@ -227,10 +204,7 @@ def reviewer_node(state: AgentState):
 
     prompt_text = QA_REVIEWER_PROMPT if phase == "qa" else _report_reviewer
     prompt = [SystemMessage(content=prompt_text), HumanMessage(content=content)]
-    try:
-        critique = primary_llm.invoke(prompt)
-    except Exception:
-        critique = review_llm.invoke(prompt)
+    critique = review_llm.invoke(prompt)
 
     print(f"[REVIEWER] critique={critique.content[:200]}")
 
@@ -260,10 +234,10 @@ def should_continue(state: AgentState) -> str:
         return "tools"
     phase = state.get("phase") or "no_resume"
     if phase == "report":
-        if state.get("preferences_collected", False):
-            print("[ROUTE] agent → reviewer (report)")
+        if "###" in _text(last_message.content):
+            print("[ROUTE] agent → reviewer (report, has sections)")
             return "reviewer"
-        print("[ROUTE] agent → end (preferences not collected)")
+        print("[ROUTE] agent → end (report, no sections yet)")
         return "end"
     if phase == "qa":
         print("[ROUTE] agent → reviewer (qa)")
