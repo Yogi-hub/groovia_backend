@@ -20,7 +20,7 @@ with st.sidebar:
     API_URL = (
         "http://localhost:8000/chat"
         if backend_choice.startswith("Local")
-        else "https://groovia-94wn.onrender.com/chat"
+        else "https://groovia-94wn-py01.onrender.com/chat"
     )
     st.markdown("---")
     if st.button("Clear Chat & Restart"):
