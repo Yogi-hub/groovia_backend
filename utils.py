@@ -1,16 +1,23 @@
 # utils.py
 import io
 import json
+import logging
 import docx2txt
 from pypdf import PdfReader
 from langchain_core.tools import tool
 from langchain_tavily import TavilySearch
 from exa_py import Exa
 from supabase import create_client, Client
-from config import EXA_API_KEY, SUPABASE_URL, SUPABASE_KEY, MENTOR_BOOKING_COL
+from config import (
+    EXA_API_KEY, SUPABASE_URL, SUPABASE_KEY,
+    MENTOR_BOOKING_COL, CAL_BASE_URL,
+    TAVILY_MAX_RESULTS, EXA_NUM_RESULTS, EXA_HIGHLIGHT_MAX_CHARS,
+)
+
+logger = logging.getLogger("immigroov.tools")
 
 exa = Exa(api_key=EXA_API_KEY)
-_tavily = TavilySearch(max_results=5)
+_tavily = TavilySearch(max_results=TAVILY_MAX_RESULTS)
 _supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def parse_pdf_to_text(file_bytes: bytes) -> str:
@@ -44,8 +51,8 @@ def precise_search(query: str) -> str:
         response = exa.search(
             query,
             type="neural",
-            num_results=3,
-            contents={"highlights": {"max_characters": 1000}},
+            num_results=EXA_NUM_RESULTS,
+            contents={"highlights": {"max_characters": EXA_HIGHLIGHT_MAX_CHARS}},
         )
         results = [
             {"url": r.url, "summary": r.highlights[0] if getattr(r, "highlights", None) else "N/A"}
@@ -56,25 +63,31 @@ def precise_search(query: str) -> str:
         return f"[SEARCH_ERROR] precise_search failed: {e}"
 
 @tool
-def retrieve_matching_mentors(target_country: str) -> str:
-    """Retrieves mentors from the database for a specific country including their booking URLs."""
+def retrieve_matching_mentors(target_country: str, profile_keyword: str = "") -> str:
+    """Retrieves mentors from the database for a specific country including their booking URLs.
+    target_country MUST be converted to its standard 2-letter ISO 3166-1 alpha-2 code (e.g., 'US' for America/USA, 'GB' for UK, 'AU' for Australia).
+    Optionally accepts a broad profile_keyword (e.g., 'Software', 'AI', 'Finance') to match the user's profession."""
     try:
-        resp = (
+        query = (
             _supabase.table("mentors")
             .select(f"name, headline, {MENTOR_BOOKING_COL}")
-            .ilike("country_expertise", target_country)   # case-insensitive match
+            .ilike("country_expertise", target_country)
             .eq("is_active", True)
-            .execute()
         )
+        
+        if profile_keyword:
+            query = query.ilike("headline", f"%{profile_keyword}%")
+            
+        resp = query.execute()
         results = [
             {
                 "name": r["name"],
                 "headline": r["headline"],
-                "booking_url": f"https://cal.com/{r[MENTOR_BOOKING_COL]}" if r.get(MENTOR_BOOKING_COL) else "No booking link available",
+                "booking_url": f"{CAL_BASE_URL}/{r[MENTOR_BOOKING_COL]}" if r.get(MENTOR_BOOKING_COL) else "No booking link available",
             }
             for r in resp.data
         ]
         return json.dumps(results)
     except Exception as e:
-        print(f"[TOOL_ERROR] Mentor retrieval failed: {e}")
+        logger.exception("Mentor retrieval failed")
         return f"[TOOL_ERROR] Mentor retrieval failed: {e}"

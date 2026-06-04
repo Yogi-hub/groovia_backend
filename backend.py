@@ -1,5 +1,6 @@
 # backend.py
 # Agent routing and state management
+import logging
 import re
 from typing import Annotated, TypedDict, Optional
 from pydantic import BaseModel, Field
@@ -18,6 +19,8 @@ from prompts import (
     REPORT_REVIEWER_PROMPT, COMPRESSION_PROMPT,
 )
 from config import GROQ_API_KEY, MAIN_MODEL_NAME, REVIEW_MODEL_NAME, TEMPERATURE
+
+logger = logging.getLogger("immigroov.agent")
 
 # Schema definition for intent routing
 class IntentClassification(BaseModel):
@@ -63,23 +66,23 @@ def _log_groq_failure(e: Exception) -> None:
     body = getattr(e, "body", None)
     if isinstance(body, dict):
         err = body.get("error", {})
-        print(f"[GROQ ERROR] code={err.get('code')} msg={err.get('message')}")
+        logger.error("Groq call failed code=%s msg=%s", err.get("code"), err.get("message"))
     else:
-        print(f"[GROQ ERROR]: {e}")
+        logger.error("Groq call failed: %s", e)
 
 # Document compression node
-def compressor_node(state: AgentState):
+async def compressor_node(state: AgentState):
     raw_text = state.get("resume_text")
     if not raw_text:
         return {}
-    summary = review_llm.invoke([
+    summary = (await review_llm.ainvoke([
         SystemMessage(content=COMPRESSION_PROMPT),
         HumanMessage(content=raw_text),
-    ]).content
+    ])).content
     return {"resume_text": summary, "resume_processed": True, "user_intent": "awaiting_intent"}
 
 # Main model invocation node
-def call_model(state: AgentState):
+async def call_model(state: AgentState):
     messages = state["messages"]
     intent = state.get("user_intent") or "no_resume"
     track = state.get("track")
@@ -96,7 +99,7 @@ def call_model(state: AgentState):
         try:
             structured_llm = review_llm.with_structured_output(IntentClassification)
             # current intent is injected so follow-up answers (e.g. "australia") aren't mis-routed
-            classification = structured_llm.invoke([
+            classification = await structured_llm.ainvoke([
                 SystemMessage(content=(
                     f"You are an intent classifier for an immigration AI. The current intent is '{intent}'. "
                     "Use 'maintain' if the user is answering a follow-up question or continuing the current flow. "
@@ -107,7 +110,7 @@ def call_model(state: AgentState):
             if classification.intent in ["report", "mentor", "qna"]:
                 new_intent = classification.intent
         except Exception as e:
-            print(f"[ROUTER ERROR] Falling back to previous intent: {e}")
+            logger.warning("Intent classification failed, keeping previous intent: %s", e)
 
     if resume == "No resume provided.":
         new_intent = "no_resume"
@@ -137,22 +140,21 @@ def call_model(state: AgentState):
         if human_history:
             history = human_history[-1:]
             
-    MAX_HISTORY = 10
-    if len(history) > MAX_HISTORY:
-        history = history[-MAX_HISTORY:]
+    if len(history) > config.MAX_HISTORY:
+        history = history[-config.MAX_HISTORY:]
             
     while history and isinstance(history[0], ToolMessage):
         history = history[1:]
 
     payload = [SystemMessage(content=instruction)] + history
 
-    print(f"[CALL_MODEL] intent={new_intent} track={track} tools_finished={is_after_tools} history_len={len(history)}")
+    logger.info("call_model intent=%s track=%s tools_finished=%s history_len=%d", new_intent, track, is_after_tools, len(history))
 
     try:
         if new_intent in ["no_resume", "awaiting_intent"]:
-            response = primary_llm.invoke(payload)
+            response = await primary_llm.ainvoke(payload)
         else:
-            response = primary_llm.bind_tools([general_search, precise_search, retrieve_matching_mentors]).invoke(payload)
+            response = await primary_llm.bind_tools([general_search, precise_search, retrieve_matching_mentors]).ainvoke(payload)
     except Exception as e:
         _log_groq_failure(e)
         raise
@@ -175,13 +177,13 @@ def call_model(state: AgentState):
     }
 
 # Response evaluation node
-def reviewer_node(state: AgentState):
+async def reviewer_node(state: AgentState):
     last_msg = state["messages"][-1]
     content = _text(last_msg.content)
     intent = state.get("user_intent")
-    
+
     prompt = [SystemMessage(content=_report_reviewer), HumanMessage(content=content)]
-    critique = review_llm.invoke(prompt)
+    critique = await review_llm.ainvoke(prompt)
 
     country_sections = len(re.findall(r"^###", content, re.MULTILINE))
     passed = "PASSED" in critique.content and country_sections >= config.NUM_COUNTRIES
@@ -247,13 +249,14 @@ workflow.add_conditional_edges("reviewer", should_revise, {"agent": "agent", "en
 app = workflow.compile(checkpointer=MemorySaver())
 
 if __name__ == "__main__":
-    try:
-        # Generate graph visualization image
-        graph_png = app.get_graph().draw_mermaid_png()
-        with open("graph.png", "wb") as f:
-            f.write(graph_png)
-        print("Graph visualization compiled and saved as graph.png")
-    except Exception as e:
-        # Fallback to terminal text representation
-        print("Could not generate PNG image. Printing text representation:")
-        print(app.get_graph().draw_mermaid())
+    if config.DRAW_GRAPH:
+        try:
+            # Generate graph visualization image
+            graph_png = app.get_graph().draw_mermaid_png()
+            with open("graph.png", "wb") as f:
+                f.write(graph_png)
+            print("Graph visualization compiled and saved as graph.png")
+        except Exception:
+            # Fallback to terminal text representation
+            print("Could not generate PNG image. Printing text representation:")
+            print(app.get_graph().draw_mermaid())

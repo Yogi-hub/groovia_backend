@@ -1,6 +1,6 @@
 # main.py
 import asyncio
-import traceback
+import logging
 import uuid
 import uvicorn
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
@@ -17,9 +17,11 @@ from schema import ChatResponse
 from utils import parse_pdf_to_text, parse_docx_to_text
 import config
 
-MAX_FILE_BYTES = 5 * 1024 * 1024
 PDF_MAGIC = b"%PDF"
 DOCX_MAGIC = b"PK\x03\x04"
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+logger = logging.getLogger("immigroov.api")
 
 limiter = Limiter(key_func=get_remote_address)
 api = FastAPI(title="Immigroov AI Career Engine")
@@ -50,7 +52,7 @@ def health():
 
 
 @api.post("/chat", response_model=ChatResponse)
-@limiter.limit("20/minute")
+@limiter.limit(config.RATE_LIMIT)
 async def chat_handler(
     request: Request,
     message: str = Form(...),
@@ -67,8 +69,8 @@ async def chat_handler(
     resume_text = None
     if file:
         file_bytes = await file.read()
-        if len(file_bytes) > MAX_FILE_BYTES:
-            raise HTTPException(status_code=413, detail="File too large. Max 5MB.")
+        if len(file_bytes) > config.MAX_FILE_BYTES:
+            raise HTTPException(status_code=413, detail=f"File too large. Max {config.MAX_FILE_BYTES // (1024 * 1024)} MB.")
 
         file_type = _detect_file_type(file_bytes, file.filename)
         if not file_type:
@@ -87,7 +89,7 @@ async def chat_handler(
     try:
         final_state = await asyncio.wait_for(
             agent_app.ainvoke(input_state, config=session_config),
-            timeout=120.0,
+            timeout=config.AGENT_TIMEOUT_SEC,
         )
         return {
             "status": "success",
@@ -96,10 +98,9 @@ async def chat_handler(
         }
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="Agent timed out. Please try again.")
-    except Exception as e:
-        print(f"[ERROR] thread={thread_id} {type(e).__name__}: {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+    except Exception:
+        logger.exception("Agent invocation failed", extra={"thread_id": thread_id})
+        raise HTTPException(status_code=500, detail="Internal error. Please try again.")
 
 
 if __name__ == "__main__":
