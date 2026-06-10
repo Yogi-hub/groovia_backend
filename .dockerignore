@@ -1,8 +1,12 @@
+# Python caches and bytecode
 __pycache__/
 *.py[cod]
 *$py.class
 
+# Local virtualenv and installer artefacts (Windows venv lives in these dirs)
 .env
+.env.example
+.env.local
 .venv
 env/
 venv/
@@ -12,14 +16,24 @@ Include/
 share/
 pyvenv.cfg
 
+# Git + IDE
 .git/
 .gitignore
+.vscode/
+.idea/
 
-# frontend — not part of the API container
-app.py
-assets/
+# Tests and dev tooling — not needed in the runtime image
+tests/
+pytest.ini
+ruff.toml
+requirements-dev.txt
+generate_architecture.py
+prototype.ipynb
 
-# local dev artefacts
+# Migrations are run from the SQL editor in Supabase, not from inside the container.
+migrations/
+
+# Local dev artefacts
 data/
 etc/
 *.png
@@ -27,8 +41,9 @@ etc/
 *.docx
 *.ipynb
 .ipynb_checkpoints/
+
+# Docs and assets not used by the API
 README.md
 docker-compose.yaml
-
-.vscode/
-.idea/
+assets/
+graph_visualization.png

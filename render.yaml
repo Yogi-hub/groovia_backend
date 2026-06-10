@@ -1,0 +1,63 @@
+# Render Blueprint. Commit this file and connect the repo to Render — Render
+# detects it, provisions the service, and only asks you to fill the `sync: false`
+# secret values from its dashboard.
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: groovia-api
+    runtime: docker
+    plan: starter            # free tier; cold-starts after 15 min idle. Upgrade to "standard" once live.
+    region: frankfurt        # EU — keeps data near Supabase EU West and stays GDPR-friendly.
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true         # Render rebuilds on every push to the watched branch.
+    envVars:
+      # Per-environment / public-ish
+      - key: PORT
+        value: 8000
+      - key: HOST
+        value: 0.0.0.0
+      - key: CORS_ORIGINS
+        sync: false          # set to your Vercel domain(s), comma-separated
+      - key: FRONTEND_URL
+        sync: false          # https://your-vercel-domain.com — used for the mentor-directory link in LLM responses
+
+      # Models
+      - key: MAIN_MODEL_NAME
+        value: llama-3.3-70b-versatile
+      - key: REVIEW_MODEL_NAME
+        value: llama-3.1-8b-instant
+
+      # Feature flags (default ON — override per environment)
+      - key: FEATURE_CHAT_HISTORY
+        value: "true"
+      - key: FEATURE_GUEST_MODE
+        value: "true"
+      - key: FEATURE_MENTORS_PUBLIC
+        value: "true"
+      - key: FEATURE_WEB_SEARCH_TOOL
+        value: "true"
+      - key: FEATURE_MENTOR_TOOL
+        value: "true"
+      - key: FEATURE_RESUME_UPLOAD
+        value: "true"
+      - key: FEATURE_GOOGLE_OAUTH
+        value: "true"
+
+      # Secrets — all marked `sync: false` so Render won't overwrite them on each deploy.
+      # Set their values in the Render dashboard once.
+      - key: GROQ_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: EXA_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: DATABASE_URL
+        sync: false           # Supabase Connection string > URI (Transaction pooler port 6543)

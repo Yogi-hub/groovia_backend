@@ -9,7 +9,12 @@ from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AI
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
-from langgraph.checkpoint.memory import MemorySaver
+import sys
+
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from psycopg import AsyncConnection
+from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
 
 import config
 from utils import general_search, precise_search, retrieve_matching_mentors
@@ -151,10 +156,10 @@ async def call_model(state: AgentState):
     logger.info("call_model intent=%s track=%s tools_finished=%s history_len=%d", new_intent, track, is_after_tools, len(history))
 
     try:
-        if new_intent in ["no_resume", "awaiting_intent"]:
+        if new_intent in ["no_resume", "awaiting_intent"] or not _active_tools:
             response = await primary_llm.ainvoke(payload)
         else:
-            response = await primary_llm.bind_tools([general_search, precise_search, retrieve_matching_mentors]).ainvoke(payload)
+            response = await primary_llm.bind_tools(_active_tools).ainvoke(payload)
     except Exception as e:
         _log_groq_failure(e)
         raise
@@ -232,11 +237,18 @@ def should_revise(state: AgentState) -> str:
         
     return "agent"
 
+# Build the active tool set from feature flags.
+_active_tools = []
+if config.FEATURE_WEB_SEARCH_TOOL:
+    _active_tools.extend([general_search, precise_search])
+if config.FEATURE_MENTOR_TOOL:
+    _active_tools.append(retrieve_matching_mentors)
+
 # State graph workflow setup
 workflow = StateGraph(AgentState)
 workflow.add_node("compressor", compressor_node)
 workflow.add_node("agent", call_model)
-workflow.add_node("tools", ToolNode([general_search, precise_search, retrieve_matching_mentors]))
+workflow.add_node("tools", ToolNode(_active_tools))
 workflow.add_node("reviewer", reviewer_node)
 
 workflow.add_conditional_edges(START, route_from_start, {"compressor": "compressor", "agent": "agent"})
@@ -245,18 +257,71 @@ workflow.add_conditional_edges("agent", should_continue, {"tools": "tools", "rev
 workflow.add_edge("tools", "agent")
 workflow.add_conditional_edges("reviewer", should_revise, {"agent": "agent", "end": END})
 
-# App compilation with memory saver
-app = workflow.compile(checkpointer=MemorySaver())
+# Persistent async checkpointing.
+#   Linux (Render):  AsyncConnectionPool — concurrent chats don't serialize
+#   Windows (dev):   single AsyncConnection — works around a psycopg-pool asyncio bug
+# Both expose an async `close()` so shutdown is the same.
+_pg_resource = None  # AsyncConnection or AsyncConnectionPool
+_checkpointer: AsyncPostgresSaver | None = None
+app = None  # workflow compiled with checkpointer; set by init_agent() at startup
+
+
+async def init_agent() -> None:
+    """Open the DB connection / pool, set up checkpoint tables, compile the graph.
+    Called from FastAPI lifespan startup."""
+    global _pg_resource, _checkpointer, app
+
+    if sys.platform == "win32":
+        # Windows: psycopg-pool's async pool clashes with the Selector loop in some
+        # edge cases. A single long-lived connection is reliable for local dev.
+        resource: AsyncConnection | AsyncConnectionPool = await AsyncConnection.connect(
+            config.SUPABASE_DB_URL,
+            autocommit=True,
+            prepare_threshold=0,
+            row_factory=dict_row,
+        )
+        mode = "single connection (Windows)"
+    else:
+        # Linux/Render: pool gives us real concurrency across chats.
+        pool = AsyncConnectionPool(
+            conninfo=config.SUPABASE_DB_URL,
+            min_size=2,
+            max_size=10,
+            kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
+            open=False,
+        )
+        await pool.open()
+        resource = pool
+        mode = "pool min=2 max=10 (Linux)"
+
+    saver = AsyncPostgresSaver(resource)
+    await saver.setup()  # idempotent — creates checkpoint tables on first run
+
+    _pg_resource = resource
+    _checkpointer = saver
+    app = workflow.compile(checkpointer=saver)
+    logger.info("Agent initialized (AsyncPostgresSaver, %s)", mode)
+
+
+async def shutdown_agent() -> None:
+    """Close the DB connection / pool cleanly on FastAPI shutdown."""
+    global _pg_resource
+    if _pg_resource is not None:
+        await _pg_resource.close()
+        _pg_resource = None
+        logger.info("Agent shutdown (resource closed)")
+
 
 if __name__ == "__main__":
+    # Dev-only graph visualization. Uses MemorySaver so we don't need to open the DB pool.
     if config.DRAW_GRAPH:
+        from langgraph.checkpoint.memory import MemorySaver
+        _local_app = workflow.compile(checkpointer=MemorySaver())
         try:
-            # Generate graph visualization image
-            graph_png = app.get_graph().draw_mermaid_png()
+            graph_png = _local_app.get_graph().draw_mermaid_png()
             with open("graph.png", "wb") as f:
                 f.write(graph_png)
             print("Graph visualization compiled and saved as graph.png")
         except Exception:
-            # Fallback to terminal text representation
             print("Could not generate PNG image. Printing text representation:")
-            print(app.get_graph().draw_mermaid())
+            print(_local_app.get_graph().draw_mermaid())

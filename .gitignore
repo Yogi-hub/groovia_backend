@@ -1,28 +1,42 @@
-# Environments
-assistance_agent/
+# Python virtualenvs
 venv/
 env/
 .venv/
-
-# Secrets
-.env
-.env.example
-
-# Python artifacts
-__pycache__/
-*.py[cod]
-.venv/
-*.pyc
 share/
 Include/
 Lib/
 Scripts/
+pyvenv.cfg
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyc
 
 # Jupyter
 .ipynb_checkpoints/
 
+# Secrets — NEVER commit these
+.env
+.env.local
+*.key
+*Auth keys.txt
+*auth keys.txt
+secrets.json
+
+# Local data
 data/
 etc/
-pyvenv.cfg
 
+# Generated artifacts
 *visualization.png
+graph.png
+system_architecture.png
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+
+# NOTE: migrations/ is INTENTIONALLY NOT ignored — schema is source code.
+# NOTE: .env.example IS committed (template for new devs).

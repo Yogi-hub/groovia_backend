@@ -1,107 +1,130 @@
 # main.py
+# FastAPI app entry point. Thin: app setup + router includes + lifespan.
 import asyncio
 import logging
-import uuid
+import sys
+from contextlib import asynccontextmanager
+
+# Windows-specific: psycopg's async driver does NOT work with the default ProactorEventLoop.
+# Force the Selector loop policy BEFORE uvicorn creates its event loop.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 import uvicorn
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from typing import Optional
-from pathlib import Path
-from langchain_core.messages import HumanMessage
 
-from backend import app as agent_app, _text
-from schema import ChatResponse
-from utils import parse_pdf_to_text, parse_docx_to_text
 import config
+import db
+from rate_limit import limiter
+from routers import auth as auth_router
+from routers import chat as chat_router
+from routers import mentors as mentors_router
 
-PDF_MAGIC = b"%PDF"
-DOCX_MAGIC = b"PK\x03\x04"
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+def _configure_logging() -> None:
+    """Structured JSON logs in production, plain text in local dev.
+    Render/Vercel log viewers handle JSON well; dev terminals are friendlier with plain."""
+    if sys.platform == "win32":
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+        return
+    try:
+        from pythonjsonlogger.json import JsonFormatter  # type: ignore
+    except ImportError:
+        # Fallback path if the dep isn't installed yet.
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+        return
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(JsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
+    root = logging.getLogger()
+    root.handlers = [handler]
+    root.setLevel(logging.INFO)
+
+
+_configure_logging()
 logger = logging.getLogger("immigroov.api")
 
-limiter = Limiter(key_func=get_remote_address)
-api = FastAPI(title="Immigroov AI Career Engine")
+
+@asynccontextmanager
+async def lifespan(api: FastAPI):
+    import backend
+    await backend.init_agent()
+    try:
+        yield
+    finally:
+        await backend.shutdown_agent()
+
+
+api = FastAPI(title="Immigroov AI Career Engine", lifespan=lifespan)
 api.state.limiter = limiter
 api.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 api.add_middleware(
     CORSMiddleware,
     allow_origins=config.CORS_ORIGINS,
+    allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
+    max_age=600,  # cache OPTIONS preflight for 10 minutes
 )
-
-
-def _detect_file_type(file_bytes: bytes, filename: str) -> Optional[str]:
-    # validate actual file content against the declared extension via magic bytes
-    ext = Path(filename).suffix.lower()
-    if ext == ".pdf" and file_bytes[:4] == PDF_MAGIC:
-        return "pdf"
-    if ext == ".docx" and file_bytes[:4] == DOCX_MAGIC:
-        return "docx"
-    return None
 
 
 @api.get("/health")
 def health():
+    """Cheap liveness check — always returns 200 if the process is up."""
     return {"status": "ok"}
 
 
-@api.post("/chat", response_model=ChatResponse)
-@limiter.limit(config.RATE_LIMIT)
-async def chat_handler(
-    request: Request,
-    message: str = Form(...),
-    thread_id: str = Form(...),
-    file: Optional[UploadFile] = File(None),
-):
+@api.get("/health/full")
+async def health_full():
+    """Deep health check. Verifies the DB is reachable. Used by Render / monitors."""
+    checks = {"api": True, "db": False, "agent": False}
     try:
-        uuid.UUID(thread_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid thread_id format.")
-
-    session_config = {"configurable": {"thread_id": thread_id}}
-
-    resume_text = None
-    if file:
-        file_bytes = await file.read()
-        if len(file_bytes) > config.MAX_FILE_BYTES:
-            raise HTTPException(status_code=413, detail=f"File too large. Max {config.MAX_FILE_BYTES // (1024 * 1024)} MB.")
-
-        file_type = _detect_file_type(file_bytes, file.filename)
-        if not file_type:
-            raise HTTPException(status_code=415, detail="Unsupported or mismatched file type. Upload PDF or DOCX only.")
-
-        if file_type == "pdf":
-            resume_text = parse_pdf_to_text(file_bytes)
-        elif file_type == "docx":
-            resume_text = parse_docx_to_text(file_bytes)
-
-    input_state = {"messages": [HumanMessage(content=message)]}
-    if resume_text:
-        input_state["resume_text"] = resume_text
-        input_state["resume_processed"] = False
-
-    try:
-        final_state = await asyncio.wait_for(
-            agent_app.ainvoke(input_state, config=session_config),
-            timeout=config.AGENT_TIMEOUT_SEC,
+        # Sync supabase-py call → push to thread pool.
+        await asyncio.to_thread(
+            lambda: db.client().table("mentors").select("id").limit(1).execute()
         )
-        return {
-            "status": "success",
-            "response": _text(final_state["messages"][-1].content),
-            "thread_id": thread_id,
-        }
-    except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail="Agent timed out. Please try again.")
+        checks["db"] = True
     except Exception:
-        logger.exception("Agent invocation failed", extra={"thread_id": thread_id})
-        raise HTTPException(status_code=500, detail="Internal error. Please try again.")
+        logger.exception("/health/full DB check failed")
+
+    try:
+        import backend
+        checks["agent"] = backend.app is not None
+    except Exception:
+        pass
+
+    ok = all(checks.values())
+    return {"ok": ok, "checks": checks}
+
+
+api.include_router(auth_router.router)
+api.include_router(chat_router.router)
+api.include_router(mentors_router.router)
 
 
 if __name__ == "__main__":
-    uvicorn.run(api, host=config.HOST, port=config.PORT)
+    # On Windows, uvicorn.run() forces Proactor — but psycopg async REQUIRES Selector.
+    # Work around by driving uvicorn.Server.serve() inside our own asyncio.run() with an
+    # explicit loop_factory that returns a Selector loop. On non-Windows, uvicorn.run is fine.
+    # timeout_graceful_shutdown gives in-flight requests up to 30s to finish before SIGKILL.
+    if sys.platform == "win32":
+        uvicorn_config = uvicorn.Config(
+            api,
+            host=config.HOST,
+            port=config.PORT,
+            loop="asyncio",
+            timeout_graceful_shutdown=30,
+        )
+        server = uvicorn.Server(uvicorn_config)
+        policy = asyncio.WindowsSelectorEventLoopPolicy()
+        asyncio.run(server.serve(), loop_factory=policy.new_event_loop)
+    else:
+        uvicorn.run(
+            api,
+            host=config.HOST,
+            port=config.PORT,
+            timeout_graceful_shutdown=30,
+        )
