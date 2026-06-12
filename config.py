@@ -23,7 +23,7 @@ HOST = "0.0.0.0"
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
 
 # Models
-MAIN_MODEL_NAME   = "llama-3.1-8b-instant"
+MAIN_MODEL_NAME   = "llama-3.3-70b-versatile"
 REVIEW_MODEL_NAME = "llama-3.1-8b-instant"
 TEMPERATURE       = 0.0
 
