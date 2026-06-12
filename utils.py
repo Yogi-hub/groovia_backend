@@ -61,6 +61,7 @@ def general_search(query: str) -> str:
     Use for: 'Tech scene in Germany', 'Cost of living in Amsterdam', 'Issues faced by expats in USA'.
     Do NOT use for visa rules, salary thresholds, or government policies.
     """
+    logger.info("tool=general_search (Tavily) query=%r", query)
     try:
         return str(_tavily_invoke(query))
     except Exception as e:
@@ -74,6 +75,7 @@ def precise_search(query: str) -> str:
     Use for: exact visa names, salary thresholds, immigration law updates, university syllabi.
     Argument: query — a specific natural language question about visa, law, salary, or policy.
     """
+    logger.info("tool=precise_search (Exa) query=%r", query)
     try:
         response = _exa_search(query)
         results = [
@@ -93,6 +95,7 @@ def retrieve_matching_mentors(target_country: str, profile_keyword: str = "") ->
     'GB' for UK, 'AU' for Australia, 'NL' for Netherlands).
     Optionally accepts a broad profile_keyword (e.g. 'Software', 'AI', 'Finance') to filter by headline.
     """
+    logger.info("tool=retrieve_matching_mentors country=%r keyword=%r", target_country, profile_keyword)
     try:
         rows = db.list_active_mentors(
             country_code=target_country,

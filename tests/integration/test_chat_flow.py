@@ -1,105 +1,67 @@
+# End-to-end /chat journey against the current gate-driven flow.
+# All LLMs and DB calls mocked; LangGraph state is real (MemorySaver).
 import uuid
-from unittest.mock import patch, MagicMock
+
+from unittest.mock import AsyncMock, patch
 from langchain_core.messages import AIMessage
 
+from content import (
+    MSG_ACK, MSG_ASK_TARGET_COUNTRY, MSG_RESUME_UPLOADED,
+)
 
-def test_health_endpoint(client):
-    resp = client.get("/health")
-    assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
-
-
-def test_new_session_no_resume(client, mock_llm):
-    """
-    A brand-new session without a resume file should succeed and return the
-    no_resume phase response (LLM mocked).
-    """
-    resp = client.post(
-        "/chat",
-        data={"message": "hello", "thread_id": str(uuid.uuid4())},
-    )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["status"] == "success"
-    assert isinstance(data["response"], str)
-    assert len(data["response"]) > 0
+MENTOR_ANSWER = (
+    "- **Maya Singh** — Software Engineer (NL Blue Card)\n"
+    "  [Book a 1-on-1 Session](https://cal.com/maya/30min)\n"
+    "To explore other mentors, please visit the [Mentor Directory](http://localhost:3000/mentors)."
+)
 
 
-def test_resume_upload_runs_compressor(client, sample_pdf_bytes):
-    """
-    Uploading a PDF resume should trigger compressor_node (review_llm) and then
-    call_model (primary_llm) for the intake phase response.
-    Both are mocked; we just verify the HTTP response is 200 with a valid body.
-    """
-    compress_response = AIMessage(content="Software Engineer, 3 years, Python/AWS/Docker.")
-    intake_response = AIMessage(
-        content="You're a Software Engineer with 3 years experience. Are you looking for Work or Study opportunities?"
-    )
+def test_full_guest_mentor_journey(client, mock_llm):
+    """upload resume → pick mentor chip → give country → get mentors → say ok.
+    Verifies gates fire deterministically and thread state persists between calls."""
+    thread = str(uuid.uuid4())
+    mock_llm.bind_tools.return_value.ainvoke = AsyncMock(return_value=AIMessage(content=MENTOR_ANSWER))
 
-    mock_bound = MagicMock()
-    mock_bound.invoke.return_value = intake_response
-
-    mock_primary = MagicMock()
-    mock_primary.invoke.return_value = intake_response
-    mock_primary.bind_tools.return_value = mock_bound
-
-    mock_review = MagicMock()
-    mock_review.invoke.return_value = compress_response
-
-    with patch("backend.primary_llm", mock_primary), \
-         patch("backend.review_llm", mock_review):
-
-        resp = client.post(
+    # Turn 1: resume upload → canned MSG_RESUME_UPLOADED, no LLM.
+    with patch("routers.chat.parse_pdf_to_text", return_value="John Doe — AI engineer, 3 yrs"):
+        r1 = client.post(
             "/chat",
-            data={"message": "Analyze my resume.", "thread_id": str(uuid.uuid4())},
-            files={"file": ("resume.pdf", sample_pdf_bytes, "application/pdf")},
+            data={"message": "[SYSTEM_RESUME_UPLOADED]", "thread_id": thread},
+            files={"file": ("resume.pdf", b"%PDF-1.4 fake", "application/pdf")},
         )
+    assert r1.status_code == 200
+    assert r1.json()["response"] == MSG_RESUME_UPLOADED
 
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["status"] == "success"
-    assert "Work or Study" in data["response"]
+    # Turn 2: mentor chip → asks for country (still no LLM).
+    r2 = client.post("/chat", data={"message": "I want to find a mentor.", "thread_id": thread})
+    assert r2.json()["response"] == MSG_ASK_TARGET_COUNTRY
+
+    # Turn 3: country given → LLM produces mentor list, reviewer passes.
+    r3 = client.post("/chat", data={"message": "netherlands", "thread_id": thread})
+    assert "Maya Singh" in r3.json()["response"]
+
+    # Turn 4: bare ack → canned reply, not a regenerated answer.
+    r4 = client.post("/chat", data={"message": "ok", "thread_id": thread})
+    assert r4.json()["response"] == MSG_ACK
 
 
-def test_track_tag_detected_and_stripped(client, sample_pdf_bytes):
-    """
-    When the intake LLM emits <TRACK:WORK>, the tag must be stripped from the
-    response shown to the user and the session must advance to report phase.
-    We verify the tag does not appear in the API response.
-    """
-    compress_response = AIMessage(content="Software Engineer, 3 years.")
-    intake_work_response = AIMessage(
-        content="Great, Work track confirmed! Any preferences for your 4-country recommendations?\n<TRACK:WORK>"
-    )
+def test_no_mentor_country_resets_cleanly(client, mock_llm):
+    """Country without mentors → polite notice; next country retries the flow."""
+    thread = str(uuid.uuid4())
+    mock_llm.bind_tools.return_value.ainvoke = AsyncMock(return_value=AIMessage(content=MENTOR_ANSWER))
 
-    mock_bound = MagicMock()
-    mock_bound.invoke.return_value = AIMessage(content="Report placeholder.")
-
-    mock_primary = MagicMock()
-    mock_primary.invoke.return_value = intake_work_response
-    mock_primary.bind_tools.return_value = mock_bound
-
-    mock_review = MagicMock()
-    mock_review.invoke.return_value = compress_response
-
-    with patch("backend.primary_llm", mock_primary), \
-         patch("backend.review_llm", mock_review):
-
-        thread_id = str(uuid.uuid4())
-        # Upload resume
+    with patch("routers.chat.parse_pdf_to_text", return_value="John Doe — AI engineer"):
         client.post(
             "/chat",
-            data={"message": "Analyze my resume.", "thread_id": thread_id},
-            files={"file": ("resume.pdf", sample_pdf_bytes, "application/pdf")},
+            data={"message": "[SYSTEM_RESUME_UPLOADED]", "thread_id": thread},
+            files={"file": ("resume.pdf", b"%PDF-1.4 fake", "application/pdf")},
         )
+    client.post("/chat", data={"message": "I want to find a mentor.", "thread_id": thread})
 
-        # Respond with work selection (in same session / same thread_id)
-        intake_resp = client.post(
-            "/chat",
-            data={"message": "I want to work abroad.", "thread_id": thread_id},
-        )
+    with patch("db.mentors_available_for_country", return_value=False):
+        r = client.post("/chat", data={"message": "russia", "thread_id": thread})
+    assert "don't have mentors" in r.json()["response"]
 
-    assert intake_resp.status_code == 200
-    response_text = intake_resp.json()["response"]
-    assert "<TRACK:WORK>" not in response_text
-    assert "<TRACK:STUDY>" not in response_text
+    # Next message names a country with mentors → normal flow resumes.
+    r2 = client.post("/chat", data={"message": "netherlands", "thread_id": thread})
+    assert "Maya Singh" in r2.json()["response"]

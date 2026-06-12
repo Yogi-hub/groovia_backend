@@ -30,7 +30,7 @@ TEMPERATURE       = 0.0
 # Agent tuning
 NUM_COUNTRIES        = 3
 MAX_REVISION         = 1
-MAX_TOOL_ITERATIONS  = 2
+MAX_TOOL_ITERATIONS  = 3
 MAX_HISTORY          = 5           # message-window per LLM call
 AGENT_TIMEOUT_SEC    = 120.0       # per /chat request
 
@@ -46,6 +46,9 @@ EXA_HIGHLIGHT_MAX_CHARS  = 1000
 # Mentor booking
 MENTOR_BOOKING_COL = "booking_url"
 CAL_BASE_URL       = "https://cal.com"
+# HMAC secret for verifying inbound Cal.com webhooks. Optional — the /webhooks/cal
+# endpoint returns 503 until it's set, everything else runs fine without it.
+CAL_WEBHOOK_SECRET = os.getenv("CAL_WEBHOOK_SECRET")
 
 # Feature flags. Default ON. Override with env var per environment.
 # Frontend has a parallel set in groovia-frontend/lib/features.ts — keep them in sync.

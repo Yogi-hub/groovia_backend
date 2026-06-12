@@ -105,6 +105,13 @@ async def chat_handler(
         title_seed=title_seed,
     )
 
+    # Once the resume has been compressed, mirror the summary onto the user's profile
+    # (account page). Write-once: a manual edit is never overwritten.
+    if user and final_state.get("resume_processed") and final_state.get("resume_text"):
+        await asyncio.to_thread(
+            db.save_profile_summary_if_empty, user.id, final_state["resume_text"]
+        )
+
     return {
         "status": "success",
         "response": _text(final_state["messages"][-1].content),
@@ -115,9 +122,9 @@ async def chat_handler(
 @router.get("/chat/threads")
 def list_threads(user: AuthUser = Depends(get_current_user)):
     """List the authenticated user's chat threads (newest first).
-    Returns empty when FEATURE_CHAT_HISTORY is off so the frontend still works."""
-    if not config.FEATURE_CHAT_HISTORY:
-        return {"threads": []}
+    Sidebar visibility is gated on the frontend via FEATURES.chatHistory; the data
+    endpoint is always available so chat-persist (auto-resume last thread on sign-in)
+    can work even when the sidebar history list is hidden."""
     return {"threads": db.list_user_threads(user.id)}
 
 

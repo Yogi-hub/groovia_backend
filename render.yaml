@@ -61,3 +61,5 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false           # Supabase Connection string > URI (Transaction pooler port 6543)
+      - key: CAL_WEBHOOK_SECRET
+        sync: false           # same value as configured in Cal.com → Settings → Developer → Webhooks

@@ -1,5 +1,7 @@
 import uuid
 
+from content import MSG_ASK_FOR_RESUME
+
 
 def test_health(client):
     resp = client.get("/health")
@@ -51,20 +53,14 @@ def test_chat_pdf_magic_mismatch(client):
     assert resp.status_code == 415
 
 
-def test_chat_valid_message_no_file(client, mock_llm):
-    resp = client.post(
-        "/chat",
-        data={"message": "hello", "thread_id": str(uuid.uuid4())},
-    )
+def test_chat_without_resume_hits_gate(client, mock_llm):
+    """A message with no resume must get the deterministic resume-ask, zero LLM calls."""
+    thread = str(uuid.uuid4())
+    resp = client.post("/chat", data={"message": "hello", "thread_id": thread})
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "success"
-    assert data["response"] == "Mock LLM response."
-    assert "thread_id" in data
-
-
-def test_chat_response_includes_thread_id(client, mock_llm):
-    thread_id = str(uuid.uuid4())
-    resp = client.post("/chat", data={"message": "hi", "thread_id": thread_id})
-    assert resp.status_code == 200
-    assert resp.json()["thread_id"] == thread_id
+    assert data["response"] == MSG_ASK_FOR_RESUME
+    assert data["thread_id"] == thread
+    mock_llm.ainvoke.assert_not_called()
+    mock_llm.bind_tools.return_value.ainvoke.assert_not_called()

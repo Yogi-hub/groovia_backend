@@ -49,6 +49,51 @@ def list_active_mentors(
     return q.execute().data or []
 
 
+def list_mentors_grouped_by_country(limit_per_country: int = 2) -> dict[str, list[dict[str, Any]]]:
+    """Return all approved+active mentors, grouped by every ISO-2 country in their expertise.
+    Used by the report flow so the LLM gets real mentor data in-prompt and never has to
+    call retrieve_matching_mentors per country.
+    Default is 2 — the report ends with a Mentor Directory link so users can browse more."""
+    rows = (
+        _supabase.table("mentors")
+        .select("display_name, headline, expertise_country_codes, booking_url")
+        .eq("status", "approved")
+        .eq("is_active", True)
+        .execute()
+        .data or []
+    )
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        if not r.get("booking_url"):
+            continue
+        for code in (r.get("expertise_country_codes") or []):
+            bucket = grouped.setdefault(code, [])
+            if len(bucket) < limit_per_country:
+                bucket.append({
+                    "name": r["display_name"],
+                    "headline": r.get("headline") or "",
+                    "booking_url": f"{config.CAL_BASE_URL}/{r['booking_url']}",
+                })
+    return grouped
+
+
+def mentors_available_for_country(country_code: str) -> bool:
+    """Cheap existence check — does the mentors table have any approved+active mentor
+    whose expertise covers this ISO-2 country code?"""
+    if not country_code:
+        return False
+    res = (
+        _supabase.table("mentors")
+        .select("id")
+        .eq("status", "approved")
+        .eq("is_active", True)
+        .contains("expertise_country_codes", [country_code.upper()])
+        .limit(1)
+        .execute()
+    )
+    return bool(res.data)
+
+
 def get_mentor_by_slug(slug: str) -> Optional[dict[str, Any]]:
     res = (
         _supabase.table("mentors")
@@ -143,6 +188,118 @@ def get_thread_owner(thread_id: str) -> Optional[str]:
     if not res.data:
         return None
     return res.data[0].get("user_id")
+
+
+# Webhooks + bookings
+
+def log_webhook_event(
+    *,
+    provider: str,
+    event_type: str,
+    external_id: Optional[str],
+    signature_ok: bool,
+    payload: dict,
+) -> Optional[str]:
+    """Append the raw webhook to the intake log BEFORE processing.
+    Returns the event row id, or None if even logging failed."""
+    try:
+        res = _supabase.table("webhook_events").insert({
+            "provider": provider,
+            "event_type": event_type,
+            "external_id": external_id,
+            "signature_ok": signature_ok,
+            "payload": payload,
+        }).execute()
+        return res.data[0]["id"] if res.data else None
+    except Exception:
+        logger.exception("Failed to log webhook event (%s %s)", provider, event_type)
+        return None
+
+
+def mark_webhook_processed(event_id: Optional[str], error: Optional[str] = None) -> None:
+    if not event_id:
+        return
+    try:
+        _supabase.table("webhook_events").update({
+            "processed_at": datetime.now(timezone.utc).isoformat(),
+            "error": error,
+        }).eq("id", event_id).execute()
+    except Exception:
+        logger.exception("Failed to mark webhook event %s processed", event_id)
+
+
+def find_mentor_by_cal_path(path_or_username: str) -> Optional[dict[str, Any]]:
+    """Resolve a mentor from a Cal.com organizer username or booking path.
+    mentors.booking_url stores 'username/event-slug', so a prefix match works
+    for both 'username' and 'username/30min'."""
+    if not path_or_username:
+        return None
+    try:
+        res = (
+            _supabase.table("mentors")
+            .select("id, display_name, booking_url")
+            .ilike("booking_url", f"{path_or_username}%")
+            .limit(1)
+            .execute()
+        )
+        return res.data[0] if res.data else None
+    except Exception:
+        logger.exception("Mentor lookup failed for cal path %r", path_or_username)
+        return None
+
+
+def get_profile_id_by_email(email: str) -> Optional[str]:
+    if not email:
+        return None
+    try:
+        res = _supabase.table("profiles").select("id").eq("email", email.lower()).limit(1).execute()
+        return res.data[0]["id"] if res.data else None
+    except Exception:
+        logger.exception("Profile lookup by email failed")
+        return None
+
+
+def update_booking_status(external_id: str, status: str) -> bool:
+    """Status-only update for lifecycle-tail events (meeting ended, no-show).
+    Returns False when no booking row exists for this uid yet."""
+    res = (
+        _supabase.table("bookings")
+        .update({"status": status})
+        .eq("external_id", external_id)
+        .execute()
+    )
+    return bool(res.data)
+
+
+def upsert_booking(fields: dict[str, Any], *, insert_only: bool = False) -> None:
+    """Idempotent write keyed on external_id (the Cal booking uid).
+    insert_only=True (BOOKING_CREATED) never overwrites an existing row — guards
+    against out-of-order webhooks downgrading a cancelled/completed booking back
+    to confirmed. Raises on failure so the caller records it in webhook_events."""
+    _supabase.table("bookings").upsert(
+        fields,
+        on_conflict="external_id",
+        ignore_duplicates=insert_only,
+    ).execute()
+
+
+# Profiles
+
+def save_profile_summary_if_empty(user_id: str, summary: str) -> None:
+    """Persist the agent-extracted resume summary to the user's profile, but only
+    when the field is still NULL — a manual edit on the account page wins."""
+    if not summary:
+        return
+    try:
+        (
+            _supabase.table("profiles")
+            .update({"profile_summary": summary[:2000]})
+            .eq("id", user_id)
+            .is_("profile_summary", "null")
+            .execute()
+        )
+    except Exception:
+        logger.exception("Failed to save profile summary for %s", user_id)
 
 
 # Auth helpers
