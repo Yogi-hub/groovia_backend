@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 # Copy only what the running app needs. Tests, migrations and dev scripts excluded by .dockerignore.
 COPY --chown=app:app \
-     main.py backend.py config.py content.py prompts.py schema.py utils.py db.py auth.py rate_limit.py \
+     main.py backend.py config.py content.py prompts.py schema.py utils.py db.py auth.py rate_limit.py nylas_client.py \
      ./
 COPY --chown=app:app routers ./routers
 
