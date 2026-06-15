@@ -246,6 +246,34 @@ def find_mentor_by_cal_path(path_or_username: str) -> Optional[dict[str, Any]]:
         return None
 
 
+def find_mentor_by_nylas_grant(grant_id: str) -> Optional[dict[str, Any]]:
+    """Resolve a mentor from the Nylas grant_id embedded in a webhook payload."""
+    if not grant_id:
+        return None
+    try:
+        res = (
+            _supabase.table("mentors")
+            .select("id, display_name, nylas_grant_id, nylas_email")
+            .eq("nylas_grant_id", grant_id)
+            .limit(1)
+            .execute()
+        )
+        return res.data[0] if res.data else None
+    except Exception:
+        logger.exception("Mentor lookup failed for nylas grant %r", grant_id)
+        return None
+
+
+def set_mentor_nylas_connection(mentor_id: str, *, grant_id: str, calendar_id: str, email: Optional[str]) -> None:
+    """Record a mentor's Nylas calendar connection after the OAuth callback."""
+    _supabase.table("mentors").update({
+        "nylas_grant_id": grant_id,
+        "nylas_calendar_id": calendar_id,
+        "nylas_email": email,
+        "calendar_connected_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("id", mentor_id).execute()
+
+
 def get_profile_id_by_email(email: str) -> Optional[str]:
     if not email:
         return None

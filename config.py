@@ -48,6 +48,14 @@ CAL_BASE_URL       = "https://cal.com"
 # Optional HMAC secret for inbound Cal.com webhooks — /webhooks/cal returns 503 until set.
 CAL_WEBHOOK_SECRET = os.getenv("CAL_WEBHOOK_SECRET")
 
+# Nylas calendar integration — mentors connect their own Google/Outlook calendar.
+NYLAS_API_KEY        = os.getenv("NYLAS_API_KEY")
+NYLAS_API_URI        = os.getenv("NYLAS_API_URI", "https://api.us.nylas.com")
+NYLAS_CLIENT_ID      = os.getenv("NYLAS_CLIENT_ID")
+NYLAS_CALLBACK_URL   = os.getenv("NYLAS_CALLBACK_URL", f"{FRONTEND_URL}/api/nylas/callback")
+# Optional HMAC secret for inbound Nylas webhooks — /webhooks/nylas returns 503 until set.
+NYLAS_WEBHOOK_SECRET = os.getenv("NYLAS_WEBHOOK_SECRET")
+
 # Feature flags, default ON. Keep in sync with groovia-frontend/lib/features.ts.
 def _flag(name: str, default: bool = True) -> bool:
     raw = os.getenv(name)

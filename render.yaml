@@ -63,3 +63,9 @@ services:
         sync: false           # Supabase Connection string > URI (Transaction pooler port 6543)
       - key: CAL_WEBHOOK_SECRET
         sync: false           # same value as configured in Cal.com → Settings → Developer → Webhooks
+      - key: NYLAS_API_KEY
+        sync: false           # from https://dashboard-v3.nylas.com → your app → API keys
+      - key: NYLAS_CLIENT_ID
+        sync: false           # from https://dashboard-v3.nylas.com → your app → Authentication
+      - key: NYLAS_WEBHOOK_SECRET
+        sync: false           # shown once when you create the webhook destination (see below)
