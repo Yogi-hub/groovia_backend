@@ -17,6 +17,7 @@ from slowapi.errors import RateLimitExceeded
 import config
 import db
 from rate_limit import limiter
+from routers import admin as admin_router
 from routers import auth as auth_router
 from routers import chat as chat_router
 from routers import mentor as mentor_router
@@ -100,6 +101,7 @@ async def health_full():
     return {"ok": ok, "checks": checks}
 
 
+api.include_router(admin_router.router)
 api.include_router(auth_router.router)
 api.include_router(chat_router.router)
 api.include_router(mentor_router.router)

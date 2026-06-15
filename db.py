@@ -247,13 +247,68 @@ def find_mentor_by_cal_path(path_or_username: str) -> Optional[dict[str, Any]]:
         return None
 
 
+def get_profile_role(profile_id: str) -> Optional[str]:
+    """Return the app-level role for a profile (candidate|mentor|admin), or None if not found."""
+    if not profile_id:
+        return None
+    res = (
+        _supabase.table("profiles")
+        .select("role")
+        .eq("id", profile_id)
+        .limit(1)
+        .execute()
+    )
+    return res.data[0]["role"] if res.data else None
+
+
+def list_mentors_by_status(status: str, limit: int = 100) -> list[dict[str, Any]]:
+    """Return mentor rows with the given status, enriched with profile email/full_name."""
+    rows = (
+        _supabase.table("mentors")
+        .select("id, slug, display_name, headline, timezone, status, created_at, profile_id")
+        .eq("status", status)
+        .order("created_at")
+        .limit(limit)
+        .execute()
+        .data or []
+    )
+    profile_ids = [r["profile_id"] for r in rows if r.get("profile_id")]
+    if profile_ids:
+        profiles = (
+            _supabase.table("profiles")
+            .select("id, email, full_name")
+            .in_("id", profile_ids)
+            .execute()
+            .data or []
+        )
+        profile_map = {p["id"]: p for p in profiles}
+        for row in rows:
+            p = profile_map.get(row.get("profile_id") or "")
+            row["email"] = p["email"] if p else None
+            row["full_name"] = p["full_name"] if p else None
+    return rows
+
+
+def set_mentor_status(mentor_id: str, status: str) -> dict[str, Any]:
+    """Update a mentor's status and return the updated row."""
+    res = (
+        _supabase.table("mentors")
+        .update({"status": status, "updated_at": datetime.now(timezone.utc).isoformat()})
+        .eq("id", mentor_id)
+        .execute()
+    )
+    if not res.data:
+        raise ValueError(f"Mentor {mentor_id!r} not found")
+    return res.data[0]
+
+
 def get_mentor_by_profile_id(profile_id: str) -> Optional[dict[str, Any]]:
     """Resolve the mentor row linked to a logged-in user's profile, if any."""
     if not profile_id:
         return None
     res = (
         _supabase.table("mentors")
-        .select("id, slug, display_name, nylas_grant_id, nylas_calendar_id, nylas_email, calendar_connected_at")
+        .select("id, slug, display_name, status, nylas_grant_id, nylas_calendar_id, nylas_email, calendar_connected_at")
         .eq("profile_id", profile_id)
         .limit(1)
         .execute()
@@ -265,7 +320,7 @@ _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
 def create_mentor_signup(profile_id: str, *, display_name: str, headline: Optional[str], timezone_name: str) -> dict[str, Any]:
-    """Creates a new mentor row for a self-service signup, approved and active by default."""
+    """Creates a new mentor row for a self-service signup, pending admin review."""
     base_slug = _SLUG_RE.sub("-", display_name.lower()).strip("-") or "mentor"
     slug = base_slug
     suffix = 2
@@ -279,7 +334,16 @@ def create_mentor_signup(profile_id: str, *, display_name: str, headline: Option
         "display_name": display_name,
         "headline": headline,
         "timezone": timezone_name,
+        "status": "pending_review",
     }).execute()
+
+    _supabase.table("profiles").update({"role": "mentor"}).eq("id", profile_id).execute()
+    _supabase.table("consent_log").insert({
+        "user_id": profile_id,
+        "consent_type": "mentor_agreement",
+        "version": "v1",
+    }).execute()
+
     return res.data[0]
 
 

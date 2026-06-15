@@ -75,6 +75,14 @@ def get_current_user_optional(
     )
 
 
+def require_admin(user: AuthUser = Depends(get_current_user)) -> AuthUser:
+    """Dependency that raises 403 unless the caller's profiles.role is 'admin'."""
+    import db as _db  # local import avoids circular dependency at module level
+    if _db.get_profile_role(user.id) != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    return user
+
+
 def attach_user_to_request(request: Request, user: Optional[AuthUser]) -> None:
     """Stash the user on request.state so handlers/middleware can read it."""
     request.state.user = user

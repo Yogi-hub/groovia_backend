@@ -28,16 +28,19 @@ class MentorSignupBody(BaseModel):
     display_name: str
     headline: Optional[str] = None
     timezone: str = "UTC"
+    agreed_to_mentor_terms: bool = False
 
 
 @router.post("/signup")
 def mentor_signup(body: MentorSignupBody, user: AuthUser = Depends(get_current_user)):
-    """Self-service mentor signup: links the logged-in account to a new, approved mentor row."""
+    """Self-service mentor signup: links the logged-in account to a new mentor row, pending admin review."""
     if db.get_mentor_by_profile_id(user.id):
         raise HTTPException(status_code=409, detail="This account is already linked to a mentor profile")
     display_name = body.display_name.strip()
     if not display_name:
         raise HTTPException(status_code=400, detail="Display name is required")
+    if not body.agreed_to_mentor_terms:
+        raise HTTPException(status_code=400, detail="You must accept the mentor agreement")
     return db.create_mentor_signup(
         user.id,
         display_name=display_name,
