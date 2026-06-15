@@ -1,6 +1,7 @@
 # routers/mentor.py
-# Authenticated endpoints for the logged-in mentor's own calendar connection.
+# Authenticated endpoints for the logged-in mentor's own profile + calendar connection.
 import logging
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -21,6 +22,28 @@ def get_my_mentor(user: AuthUser = Depends(get_current_user)):
     if not mentor:
         raise HTTPException(status_code=404, detail="No mentor profile for this account")
     return mentor
+
+
+class MentorSignupBody(BaseModel):
+    display_name: str
+    headline: Optional[str] = None
+    timezone: str = "UTC"
+
+
+@router.post("/signup")
+def mentor_signup(body: MentorSignupBody, user: AuthUser = Depends(get_current_user)):
+    """Self-service mentor signup: links the logged-in account to a new, approved mentor row."""
+    if db.get_mentor_by_profile_id(user.id):
+        raise HTTPException(status_code=409, detail="This account is already linked to a mentor profile")
+    display_name = body.display_name.strip()
+    if not display_name:
+        raise HTTPException(status_code=400, detail="Display name is required")
+    return db.create_mentor_signup(
+        user.id,
+        display_name=display_name,
+        headline=(body.headline or "").strip() or None,
+        timezone_name=body.timezone,
+    )
 
 
 @router.get("/nylas/connect-url")

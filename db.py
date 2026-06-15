@@ -1,6 +1,7 @@
 # Server-side Supabase client (service role) + typed query helpers. Never expose to the browser.
 
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -258,6 +259,28 @@ def get_mentor_by_profile_id(profile_id: str) -> Optional[dict[str, Any]]:
         .execute()
     )
     return res.data[0] if res.data else None
+
+
+_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def create_mentor_signup(profile_id: str, *, display_name: str, headline: Optional[str], timezone_name: str) -> dict[str, Any]:
+    """Creates a new mentor row for a self-service signup, approved and active by default."""
+    base_slug = _SLUG_RE.sub("-", display_name.lower()).strip("-") or "mentor"
+    slug = base_slug
+    suffix = 2
+    while _supabase.table("mentors").select("id").eq("slug", slug).limit(1).execute().data:
+        slug = f"{base_slug}-{suffix}"
+        suffix += 1
+
+    res = _supabase.table("mentors").insert({
+        "profile_id": profile_id,
+        "slug": slug,
+        "display_name": display_name,
+        "headline": headline,
+        "timezone": timezone_name,
+    }).execute()
+    return res.data[0]
 
 
 def find_mentor_by_nylas_grant(grant_id: str) -> Optional[dict[str, Any]]:
