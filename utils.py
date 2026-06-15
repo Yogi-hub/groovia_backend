@@ -1,4 +1,3 @@
-# utils.py
 import io
 import json
 import logging

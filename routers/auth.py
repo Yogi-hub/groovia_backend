@@ -1,4 +1,3 @@
-# routers/auth.py
 # Public auth helpers — no token required.
 import logging
 

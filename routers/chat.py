@@ -105,8 +105,7 @@ async def chat_handler(
         title_seed=title_seed,
     )
 
-    # Once the resume has been compressed, mirror the summary onto the user's profile
-    # (account page). Write-once: a manual edit is never overwritten.
+    # Mirror compressed resume onto the user's profile, write-once (manual edits stay).
     if user and final_state.get("resume_processed") and final_state.get("resume_text"):
         await asyncio.to_thread(
             db.save_profile_summary_if_empty, user.id, final_state["resume_text"]

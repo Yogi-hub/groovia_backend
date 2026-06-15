@@ -1,6 +1,4 @@
-# routers/webhooks.py
-# Inbound webhook receivers. Pattern: verify signature → append to webhook_events →
-# process idempotently → mark processed (or store the error for replay).
+# Inbound webhook receivers: verify signature, append to webhook_events, process idempotently.
 import asyncio
 import hashlib
 import hmac
@@ -26,8 +24,7 @@ _STATUS_MAP = {
     "BOOKING_NO_SHOW_UPDATED": "no_show",
 }
 
-# Lifecycle-tail events carry partial payloads — update the status only, never
-# overwrite the row's details with NULLs.
+# Lifecycle-tail events carry partial payloads — update status only, don't null out details.
 _STATUS_ONLY_EVENTS = {"MEETING_ENDED", "BOOKING_NO_SHOW_UPDATED"}
 
 

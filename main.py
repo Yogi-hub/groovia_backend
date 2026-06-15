@@ -1,12 +1,10 @@
-# main.py
-# FastAPI app entry point. Thin: app setup + router includes + lifespan.
+# FastAPI app entry point: app setup + router includes + lifespan.
 import asyncio
 import logging
 import sys
 from contextlib import asynccontextmanager
 
-# Windows-specific: psycopg's async driver does NOT work with the default ProactorEventLoop.
-# Force the Selector loop policy BEFORE uvicorn creates its event loop.
+# psycopg's async driver needs the Selector loop, not the default Proactor (Windows-only).
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
@@ -108,10 +106,7 @@ api.include_router(webhooks_router.router)
 
 
 if __name__ == "__main__":
-    # On Windows, uvicorn.run() forces Proactor — but psycopg async REQUIRES Selector.
-    # Work around by driving uvicorn.Server.serve() inside our own asyncio.run() with an
-    # explicit loop_factory that returns a Selector loop. On non-Windows, uvicorn.run is fine.
-    # timeout_graceful_shutdown gives in-flight requests up to 30s to finish before SIGKILL.
+    # uvicorn.run() forces Proactor on Windows; drive Server.serve() ourselves with a Selector loop instead.
     if sys.platform == "win32":
         uvicorn_config = uvicorn.Config(
             api,

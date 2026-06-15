@@ -1,5 +1,4 @@
-# Application configuration. Secrets and per-environment values come from .env.
-# Everything else is hardcoded here so it can be changed without touching logic files.
+# Secrets and per-environment values come from .env; everything else is hardcoded here.
 import os
 import sys
 from dotenv import load_dotenv
@@ -46,12 +45,10 @@ EXA_HIGHLIGHT_MAX_CHARS  = 1000
 # Mentor booking
 MENTOR_BOOKING_COL = "booking_url"
 CAL_BASE_URL       = "https://cal.com"
-# HMAC secret for verifying inbound Cal.com webhooks. Optional — the /webhooks/cal
-# endpoint returns 503 until it's set, everything else runs fine without it.
+# Optional HMAC secret for inbound Cal.com webhooks — /webhooks/cal returns 503 until set.
 CAL_WEBHOOK_SECRET = os.getenv("CAL_WEBHOOK_SECRET")
 
-# Feature flags. Default ON. Override with env var per environment.
-# Frontend has a parallel set in groovia-frontend/lib/features.ts — keep them in sync.
+# Feature flags, default ON. Keep in sync with groovia-frontend/lib/features.ts.
 def _flag(name: str, default: bool = True) -> bool:
     raw = os.getenv(name)
     if raw is None:

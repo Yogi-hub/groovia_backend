@@ -1,13 +1,4 @@
-# backend.py
-# Agent routing and state management.
-#
-# Flow: the agent runs through a series of deterministic gates before any LLM call.
-#   1. No resume      → echo MSG_ASK_FOR_RESUME       (no LLM)
-#   2. Resume only    → echo MSG_RESUME_UPLOADED      (no LLM)
-#   3. Intent = qna chip only → echo MSG_ASK_FOR_QUESTION  (no LLM)
-#   4. Intent = mentor, no country → echo MSG_ASK_TARGET_COUNTRY (no LLM)
-#   5. Intent = report, no track   → echo MSG_ASK_TRACK_AND_PREFS (no LLM)
-#   6. All gates passed → compress resume (1 call) → primary LLM → reviewer loop
+# Agent routing: deterministic gates run before any LLM call, then primary LLM + reviewer loop.
 import logging
 import re
 import sys
@@ -50,8 +41,7 @@ _INTENT_PROMPTS = {
 }
 _report_reviewer = REPORT_REVIEWER_PROMPT.replace("{{num_countries}}", str(_n))
 
-# Two flavours of the same model — primary handles user-facing answers + tool calls;
-# review handles structured tasks (reviewer audits, resume compression).
+# Primary handles user-facing answers + tool calls; review handles audits/compression.
 primary_llm = ChatGroq(model=MAIN_MODEL_NAME, temperature=TEMPERATURE, api_key=GROQ_API_KEY)
 review_llm  = ChatGroq(model=REVIEW_MODEL_NAME, temperature=TEMPERATURE, api_key=GROQ_API_KEY)
 
@@ -71,9 +61,7 @@ class AgentState(TypedDict):
 
 # ─── Deterministic extractors (no LLM) ─────────────────────────────────────────
 
-# Country alias → ISO-2. Covers every plausible immigration destination so users never
-# get stuck in a "which country?" loop. The reverse lookup (ISO → display name) sits
-# in _COUNTRY_DISPLAY below — used when the DB has no mentors for that country.
+# Country alias → ISO-2. Reverse lookup (ISO → display name) is _COUNTRY_DISPLAY below.
 _COUNTRY_ALIASES: dict[str, str] = {
     # Europe
     "germany": "DE", "deutschland": "DE",
@@ -224,8 +212,7 @@ _COUNTRY_PATTERNS: list[tuple[re.Pattern, str]] = [
 _TRACK_WORK_RE  = re.compile(r"\bwork\b", re.IGNORECASE)
 _TRACK_STUDY_RE = re.compile(r"\bstud(y|ies|ying)\b", re.IGNORECASE)
 
-# Loose patterns so repeat requests like "find me another mentor" or "give me a new
-# career report" route correctly. Up to 3 filler words between the verb and the noun.
+# Matches repeat requests like "find me another mentor" / "give me a new career report".
 _MENTOR_REQ_RE = re.compile(
     r"\b(?:find|show|recommend|get|need|want|book|connect|suggest)\b(?:\s+\w+){0,3}?\s+mentors?\b",
     re.IGNORECASE,
@@ -263,8 +250,7 @@ def _classify_intent(text: str, current: Optional[str]) -> Optional[str]:
     return current
 
 
-# Gate questions — when the last assistant message is one of these, the user's
-# reply belongs to the in-progress flow and must not demote the intent.
+# If the last assistant message is one of these, the reply belongs to the in-progress flow.
 _CLARIFYING_PROMPTS = frozenset({
     MSG_ASK_FOR_RESUME, MSG_RESUME_UPLOADED,
     MSG_ASK_FOR_QUESTION, MSG_ASK_TARGET_COUNTRY, MSG_ASK_TRACK_AND_PREFS,
@@ -273,9 +259,7 @@ _CLARIFYING_PROMPTS = frozenset({
 # Canned messages (gates + acks) skip the reviewer — they aren't LLM answers.
 _NO_REVIEW_MSGS = _CLARIFYING_PROMPTS | {MSG_ACK}
 
-# Bare acknowledgements get a canned reply instead of an LLM call. Without this,
-# "ok" after a report re-enters the LLM with report-heavy history and tends to
-# regenerate the whole thing.
+# Bare acknowledgements get a canned reply instead of re-entering the LLM.
 _ACK_WORDS = frozenset({
     "ok", "okay", "k", "kk", "thanks", "thank you", "thanks a lot",
     "thank you so much", "great", "cool", "nice", "got it", "perfect",
@@ -305,9 +289,7 @@ def _text(content) -> str:
     return ""
 
 
-# Llama-family tool-calling sometimes emits the function-call as TEXT instead of a
-# structured tool_calls field. Strip those leaked tags so users never see them.
-# Also catches a few common variants the model produces.
+# Llama sometimes emits the tool call as leaked text instead of structured tool_calls.
 _LEAKED_TOOL_TAG_RE = re.compile(
     r"\s*<\s*function\s*=\s*\w+\s*>\s*\{.*?\}\s*<\s*/\s*function\s*>\s*",
     re.IGNORECASE | re.DOTALL,
@@ -366,9 +348,7 @@ async def call_model(state: AgentState):
         if reclassified:
             new_intent = reclassified
         elif intent in ("report", "mentor") and not _last_ai_is_clarifying(messages):
-            # The heavy flow already delivered its answer. A generic follow-up is a
-            # question about it, not a request to regenerate. One exception: a bare
-            # country name right after a mentor list means "same again, but there".
+            # A generic follow-up is a question, not a regeneration request, except a bare country name after a mentor list.
             if intent == "mentor" and extracted_country and len(last_lower.split()) <= 4 and "?" not in last_lower:
                 new_intent = "mentor"
             else:
@@ -456,9 +436,7 @@ async def call_model(state: AgentState):
         new_revision_count = state.get("revision_count", 0)
         critique_to_use = state.get("critique")
 
-    # Step 5: prompt assembly.
-    # For the report flow, pre-fetch the mentor inventory so the LLM has real mentor
-    # names + URLs in-prompt — eliminates "LLM forgot to call the tool" hallucination.
+    # Step 5: prompt assembly. Pre-fetch mentor inventory for report flow so the LLM has real names + URLs.
     mentor_inventory = ""
     if new_intent == "report":
         try:
@@ -502,9 +480,7 @@ async def call_model(state: AgentState):
         while history and isinstance(history[-1], AIMessage):
             history = history[:-1]
 
-    # Q&A turns: a full report or mentor list sitting in history drags the model
-    # back into report mode ("context bleed"). Keep a stub so the model knows what
-    # was discussed without the pattern dominating its output.
+    # Q&A turns: stub out long prior report/mentor answers to avoid context bleed.
     if new_intent == "qna":
         slimmed = []
         for m in history:
@@ -646,9 +622,7 @@ workflow.add_conditional_edges("reviewer", should_revise, {"agent": "agent", "en
 
 
 # ─── Async checkpointer lifecycle ─────────────────────────────────────────────
-#   Linux (Render):  AsyncConnectionPool — concurrent chats don't serialize.
-#   Windows (dev):   single AsyncConnection — sidesteps a psycopg-pool asyncio bug.
-# Both expose async close() so shutdown is symmetric.
+# Linux uses AsyncConnectionPool; Windows uses a single AsyncConnection (psycopg-pool asyncio bug).
 
 _pg_resource: AsyncConnection | AsyncConnectionPool | None = None
 _checkpointer: AsyncPostgresSaver | None = None

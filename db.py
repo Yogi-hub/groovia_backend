@@ -1,6 +1,4 @@
-# db.py
-# Server-side Supabase client (service role) + typed query helpers.
-# Service role bypasses RLS — this client must NEVER be exposed to the browser.
+# Server-side Supabase client (service role) + typed query helpers. Never expose to the browser.
 
 import logging
 from datetime import datetime, timezone
