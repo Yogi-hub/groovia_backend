@@ -19,6 +19,7 @@ import db
 from rate_limit import limiter
 from routers import auth as auth_router
 from routers import chat as chat_router
+from routers import mentor as mentor_router
 from routers import mentors as mentors_router
 from routers import webhooks as webhooks_router
 
@@ -101,6 +102,7 @@ async def health_full():
 
 api.include_router(auth_router.router)
 api.include_router(chat_router.router)
+api.include_router(mentor_router.router)
 api.include_router(mentors_router.router)
 api.include_router(webhooks_router.router)
 

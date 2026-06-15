@@ -246,6 +246,20 @@ def find_mentor_by_cal_path(path_or_username: str) -> Optional[dict[str, Any]]:
         return None
 
 
+def get_mentor_by_profile_id(profile_id: str) -> Optional[dict[str, Any]]:
+    """Resolve the mentor row linked to a logged-in user's profile, if any."""
+    if not profile_id:
+        return None
+    res = (
+        _supabase.table("mentors")
+        .select("id, slug, display_name, nylas_grant_id, nylas_calendar_id, nylas_email, calendar_connected_at")
+        .eq("profile_id", profile_id)
+        .limit(1)
+        .execute()
+    )
+    return res.data[0] if res.data else None
+
+
 def find_mentor_by_nylas_grant(grant_id: str) -> Optional[dict[str, Any]]:
     """Resolve a mentor from the Nylas grant_id embedded in a webhook payload."""
     if not grant_id:
