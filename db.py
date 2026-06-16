@@ -265,7 +265,7 @@ def list_mentors_by_status(status: str, limit: int = 100) -> list[dict[str, Any]
     """Return mentor rows with the given status, enriched with profile email/full_name."""
     rows = (
         _supabase.table("mentors")
-        .select("id, slug, display_name, headline, timezone, status, created_at, profile_id")
+        .select("id, slug, display_name, headline, timezone, status, submission_count, created_at, profile_id")
         .eq("status", status)
         .order("created_at")
         .limit(limit)
@@ -319,7 +319,22 @@ def get_mentor_by_profile_id(profile_id: str) -> Optional[dict[str, Any]]:
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
-def create_mentor_signup(profile_id: str, *, display_name: str, headline: Optional[str], timezone_name: str) -> dict[str, Any]:
+def create_mentor_signup(
+    profile_id: str,
+    *,
+    display_name: str,
+    headline: Optional[str],
+    timezone_name: str,
+    expertise_country_codes: list[str] | None = None,
+    languages: list[str] | None = None,
+    professional_domains: list[str] | None = None,
+    years_lived_experience: Optional[int] = None,
+    bio: Optional[str] = None,
+    linkedin_url: Optional[str] = None,
+    youtube_url: Optional[str] = None,
+    instagram_url: Optional[str] = None,
+    session_duration_minutes: int = 60,
+) -> dict[str, Any]:
     """Creates a new mentor row for a self-service signup, pending admin review."""
     base_slug = _SLUG_RE.sub("-", display_name.lower()).strip("-") or "mentor"
     slug = base_slug
@@ -335,6 +350,16 @@ def create_mentor_signup(profile_id: str, *, display_name: str, headline: Option
         "headline": headline,
         "timezone": timezone_name,
         "status": "pending_review",
+        "submission_count": 1,
+        "expertise_country_codes": expertise_country_codes or [],
+        "languages": languages or [],
+        "professional_domains": professional_domains or [],
+        "years_lived_experience": years_lived_experience,
+        "bio": bio,
+        "linkedin_url": linkedin_url,
+        "youtube_url": youtube_url,
+        "instagram_url": instagram_url,
+        "session_duration_minutes": session_duration_minutes,
     }).execute()
 
     _supabase.table("profiles").update({"role": "mentor"}).eq("id", profile_id).execute()
@@ -345,6 +370,92 @@ def create_mentor_signup(profile_id: str, *, display_name: str, headline: Option
     }).execute()
 
     return res.data[0]
+
+
+# Non-critical: presentation-only fields — no re-approval needed.
+_NON_CRITICAL_MENTOR_FIELDS = {
+    "display_name", "headline", "bio", "photo_url",
+    "languages", "linkedin_url", "youtube_url", "instagram_url",
+    "timezone", "session_duration_minutes",
+}
+
+# Critical: expertise claims — changes flip status back to pending_review.
+_CRITICAL_MENTOR_FIELDS = {
+    "expertise_country_codes", "years_lived_experience", "professional_domains",
+}
+
+
+def update_mentor_profile(mentor_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+    """Update non-critical mentor fields. No re-approval triggered."""
+    safe = {k: v for k, v in fields.items() if k in _NON_CRITICAL_MENTOR_FIELDS}
+    if not safe:
+        raise ValueError("No valid non-critical fields to update")
+    safe["updated_at"] = datetime.now(timezone.utc).isoformat()
+    res = _supabase.table("mentors").update(safe).eq("id", mentor_id).execute()
+    if not res.data:
+        raise ValueError(f"Mentor {mentor_id!r} not found")
+    return res.data[0]
+
+
+def update_mentor_critical_fields(mentor_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+    """Update expertise/credibility fields — flips status to pending_review and increments submission_count."""
+    safe = {k: v for k, v in fields.items() if k in _CRITICAL_MENTOR_FIELDS}
+    if not safe:
+        raise ValueError("No valid critical fields to update")
+    safe["status"] = "pending_review"
+    safe["updated_at"] = datetime.now(timezone.utc).isoformat()
+    # Increment submission_count so admin can tell this is a re-review.
+    current = (
+        _supabase.table("mentors").select("submission_count").eq("id", mentor_id).limit(1).execute()
+    )
+    count = (current.data[0].get("submission_count") or 1) if current.data else 1
+    safe["submission_count"] = count + 1
+    res = _supabase.table("mentors").update(safe).eq("id", mentor_id).execute()
+    if not res.data:
+        raise ValueError(f"Mentor {mentor_id!r} not found")
+    return res.data[0]
+
+
+def get_mentor_availability(mentor_id: str) -> list[dict[str, Any]]:
+    """Return all weekly availability slots for a mentor, ordered by day and time."""
+    res = (
+        _supabase.table("mentor_availability")
+        .select("id, day_of_week, start_time, end_time")
+        .eq("mentor_id", mentor_id)
+        .order("day_of_week")
+        .order("start_time")
+        .execute()
+    )
+    return res.data or []
+
+
+def set_mentor_availability(
+    mentor_id: str,
+    slots: list[dict[str, Any]],
+    session_duration_minutes: int,
+    availability_type: str = "manual",
+) -> list[dict[str, Any]]:
+    """Replace a mentor's weekly availability slots atomically and update their session duration."""
+    _supabase.table("mentor_availability").delete().eq("mentor_id", mentor_id).execute()
+    inserted: list[dict[str, Any]] = []
+    if slots:
+        rows = [
+            {
+                "mentor_id": mentor_id,
+                "day_of_week": s["day_of_week"],
+                "start_time": s["start_time"],
+                "end_time": s["end_time"],
+            }
+            for s in slots
+        ]
+        res = _supabase.table("mentor_availability").insert(rows).execute()
+        inserted = res.data or []
+    _supabase.table("mentors").update({
+        "session_duration_minutes": session_duration_minutes,
+        "availability_type": availability_type,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("id", mentor_id).execute()
+    return inserted
 
 
 def find_mentor_by_nylas_grant(grant_id: str) -> Optional[dict[str, Any]]:
