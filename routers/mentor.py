@@ -262,6 +262,8 @@ def nylas_callback(body: NylasCallbackBody):
         logger.exception("Failed to fetch calendars for grant %s", grant_id)
         calendar_id = None
     db.set_mentor_nylas_connection(mentor_id, grant_id=grant_id, calendar_id=calendar_id, email=email)
-    # Mark availability type as calendar since they just connected.
-    db.set_mentor_availability(mentor_id, slots=[], session_duration_minutes=60, availability_type="calendar")
+    # Preserve the mentor's existing session duration — only flip availability_type to 'calendar'.
+    mentor = db.get_mentor_by_id(mentor_id)
+    duration = mentor.get("session_duration_minutes", 60) if mentor else 60
+    db.set_mentor_availability(mentor_id, slots=[], session_duration_minutes=duration, availability_type="calendar")
     return {"connected": True, "email": email}

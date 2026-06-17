@@ -86,3 +86,9 @@ _missing = [k for k, v in {
 }.items() if not v]
 if _missing:
     sys.exit(f"[FATAL] Missing required environment variables: {', '.join(_missing)}")
+
+# Nylas is optional at startup but calendar features won't work without it.
+_nylas_missing = [k for k, v in {"NYLAS_API_KEY": NYLAS_API_KEY, "NYLAS_CLIENT_ID": NYLAS_CLIENT_ID}.items() if not v]
+if _nylas_missing:
+    import warnings
+    warnings.warn(f"[WARN] Nylas calendar integration disabled — missing: {', '.join(_nylas_missing)}", stacklevel=1)

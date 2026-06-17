@@ -16,6 +16,9 @@ logger = logging.getLogger("immigroov.routers.mentors")
 
 router = APIRouter(prefix="/mentors", tags=["mentors"])
 
+# Fields that must never leave the backend in a public response.
+_PRIVATE_FIELDS = {"nylas_grant_id", "nylas_calendar_id", "nylas_email", "profile_id"}
+
 
 @router.get("")
 def list_mentors(
@@ -44,7 +47,10 @@ def get_mentor(slug: str):
     mentor = db.get_mentor_by_slug(slug)
     if not mentor:
         raise HTTPException(status_code=404, detail="Mentor not found")
-    return mentor
+    public = {k: v for k, v in mentor.items() if k not in _PRIVATE_FIELDS}
+    # Expose a safe boolean so the frontend can decide whether to show the scheduler.
+    public["has_calendar"] = bool(mentor.get("nylas_grant_id") and mentor.get("nylas_calendar_id"))
+    return public
 
 
 def _mentor_with_calendar(slug: str) -> dict:
@@ -97,6 +103,7 @@ class BookingRequest(BaseModel):
     candidate_name: str
     candidate_email: EmailStr
     candidate_timezone: str = "UTC"
+    notes: Optional[str] = None
 
 
 @router.post("/{slug}/book")
@@ -127,6 +134,7 @@ def book_session(slug: str, body: BookingRequest, user: Optional[AuthUser] = Dep
     candidate_when = _format_local(body.start_time, body.candidate_timezone)
 
     try:
+        notes_html = f"<p><b>Notes from {body.candidate_name}:</b><br>{body.notes}</p>" if body.notes else ""
         nylas_client.send_email(
             grant_id=mentor["nylas_grant_id"],
             to=[{"email": body.candidate_email, "name": body.candidate_name}],
@@ -148,6 +156,7 @@ def book_session(slug: str, body: BookingRequest, user: Optional[AuthUser] = Dep
                 f"<p>{body.candidate_name} ({body.candidate_email}) booked a session with you for "
                 f"<b>{mentor_when}</b> (your local time).</p>"
                 + (f"<p>Video call link: <a href='{meeting_url}'>{meeting_url}</a></p>" if meeting_url else "")
+                + notes_html
             ),
         )
     except Exception:

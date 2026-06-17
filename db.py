@@ -55,7 +55,7 @@ def list_mentors_grouped_by_country(limit_per_country: int = 2) -> dict[str, lis
     Default is 2 — the report ends with a Mentor Directory link so users can browse more."""
     rows = (
         _supabase.table("mentors")
-        .select("display_name, headline, expertise_country_codes, booking_url")
+        .select("display_name, headline, slug, expertise_country_codes, booking_url, nylas_grant_id")
         .eq("status", "approved")
         .eq("is_active", True)
         .execute()
@@ -63,15 +63,21 @@ def list_mentors_grouped_by_country(limit_per_country: int = 2) -> dict[str, lis
     )
     grouped: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
-        if not r.get("booking_url"):
+        has_native_booking = bool(r.get("nylas_grant_id"))
+        has_external_booking = bool(r.get("booking_url"))
+        if not has_native_booking and not has_external_booking:
             continue
+        if has_native_booking:
+            url = f"{config.FRONTEND_URL}/mentors/{r['slug']}"
+        else:
+            url = f"{config.CAL_BASE_URL}/{r['booking_url']}"
         for code in (r.get("expertise_country_codes") or []):
             bucket = grouped.setdefault(code, [])
             if len(bucket) < limit_per_country:
                 bucket.append({
                     "name": r["display_name"],
                     "headline": r.get("headline") or "",
-                    "booking_url": f"{config.CAL_BASE_URL}/{r['booking_url']}",
+                    "booking_url": url,
                 })
     return grouped
 
@@ -308,8 +314,24 @@ def get_mentor_by_profile_id(profile_id: str) -> Optional[dict[str, Any]]:
         return None
     res = (
         _supabase.table("mentors")
-        .select("id, slug, display_name, status, nylas_grant_id, nylas_calendar_id, nylas_email, calendar_connected_at")
+        .select("id, slug, display_name, status, session_duration_minutes, "
+                "nylas_grant_id, nylas_calendar_id, nylas_email, calendar_connected_at")
         .eq("profile_id", profile_id)
+        .limit(1)
+        .execute()
+    )
+    return res.data[0] if res.data else None
+
+
+def get_mentor_by_id(mentor_id: str) -> Optional[dict[str, Any]]:
+    """Fetch a mentor row by primary key — used internally (never exposed to browser)."""
+    if not mentor_id:
+        return None
+    res = (
+        _supabase.table("mentors")
+        .select("id, slug, display_name, status, session_duration_minutes, timezone, "
+                "nylas_grant_id, nylas_calendar_id, nylas_email")
+        .eq("id", mentor_id)
         .limit(1)
         .execute()
     )
